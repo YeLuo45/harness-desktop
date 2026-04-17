@@ -196,6 +196,23 @@ export class ContextManager {
     this.tokenCount = 0
   }
 
+  // v2: Merge pointers from sub-agent KV cache
+  mergePointers(pointers: MemoryPointer[]): number {
+    let merged = 0
+
+    for (const pointer of pointers) {
+      // Check if pointer with same ID already exists
+      const existing = this.memory.find(p => p.id === pointer.id)
+      if (!existing) {
+        this.memory.push(pointer)
+        merged++
+      }
+    }
+
+    this.updateTokenCount()
+    return merged
+  }
+
   // Private helpers
   private generateSummary(content: string, type: MemoryPointer['type']): string {
     // Generate a brief summary based on type

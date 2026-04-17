@@ -120,6 +120,10 @@ export interface AppConfig {
     medium: boolean
     high: boolean
   }
+  // v2: Verification config
+  verification?: VerificationConfig
+  // v2: SubAgent config
+  subAgent?: SubAgentConfig
 }
 
 export type ModelProvider = 'openai' | 'minimax' | 'glm' | 'xiaomi' | 'qwen'
@@ -187,4 +191,100 @@ export interface ToolParamDef {
   type: string
   description?: string
   enum?: string[]
+  items?: { type: string; description?: string }
+}
+
+// ==========================================
+// v2: Sub Agent Types
+// ==========================================
+
+export interface SubAgentConfig {
+  enabled: boolean
+  maxConcurrentAgents: number
+  maxKVCacheSize: number
+  maxSubtasks: number
+}
+
+export type SubAgentStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface SubTask {
+  id: string
+  description: string
+  toolCalls: ToolCall[]
+  status: SubAgentStatus
+  result?: SubTaskResult
+  parentId?: string  // Parent sub-agent ID if nested
+  dependencies: string[]  // IDs of tasks that must complete first
+  createdAt: number
+  startedAt?: number
+  completedAt?: number
+}
+
+export interface SubTaskResult {
+  success: boolean
+  toolResults: ToolResult[]
+  output: string
+  error?: string
+}
+
+export interface SubAgent {
+  id: string
+  name: string
+  status: SubAgentStatus
+  parentId?: string  // ID of parent agent
+  tasks: SubTask[]
+  kvCache: KVCacheSnapshot
+  createdAt: number
+  completedAt?: number
+}
+
+export interface KVCacheSnapshot {
+  pointers: MemoryPointer[]
+  tokenCount: number
+  maxTokens: number
+}
+
+export interface SubAgentResult {
+  agentId: string
+  success: boolean
+  tasks: SubTaskResult[]
+  aggregatedOutput: string
+  kvCacheSnapshot: KVCacheSnapshot
+}
+
+// ==========================================
+// v2: Verification Hooks Types
+// ==========================================
+
+export type VerificationLevel = 'strict' | 'loose' | 'disabled'
+
+export interface VerificationConfig {
+  level: VerificationLevel
+  autoRetry: boolean
+  maxRetries: number
+  degradeOnFailure: boolean
+}
+
+export interface VerificationRule {
+  toolName: string
+  checks: VerificationCheck[]
+}
+
+export interface VerificationCheck {
+  name: string
+  validate: (result: ToolResult) => ValidationResult
+}
+
+export interface ValidationResult {
+  passed: boolean
+  message?: string
+  severity?: 'error' | 'warning' | 'info'
+}
+
+export interface VerificationReport {
+  toolName: string
+  results: ValidationResult[]
+  overallPassed: boolean
+  retryRecommended: boolean
+  degradeRecommended: boolean
 }

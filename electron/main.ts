@@ -45,7 +45,7 @@ let toolExecutor: ToolExecutor | null = null
 let sandboxManager: SandboxManager | null = null
 let systemPromptEngine: SystemPromptEngine | null = null
 
-const isDev = process.env.NODE_ENV !== 'production' || !app.isPackaged
+const isDev = !app.isPackaged
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -67,6 +67,24 @@ async function createWindow() {
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
     console.log('[MAIN] Window ready to show')
+  })
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('[MAIN] WebContents did-finish-load')
+  })
+
+  mainWindow.webContents.on('did-fail-load', (_, errorCode, errorDescription) => {
+    console.log('[MAIN] WebContents did-fail-load:', errorCode, errorDescription)
+  })
+
+  mainWindow.webContents.on('render-process-gone', (_, details) => {
+    console.log('[MAIN] WebContents render-process-gone:', details.reason)
+  })
+
+  mainWindow.webContents.on('console-message', (_, level, message, line, sourceId) => {
+    if (level >= 2) { // Error and critical
+      console.log(`[MAIN] Console error [${level}]: ${message} (${sourceId}:${line})`)
+    }
   })
 
   // Initialize core services

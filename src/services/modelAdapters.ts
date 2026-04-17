@@ -616,3 +616,100 @@ export const MVP_TOOLS: ToolDefinition[] = [
     }
   }
 ]
+
+// v2: Extended tool definitions
+export const V2_TOOLS: ToolDefinition[] = [
+  ...MVP_TOOLS,
+  {
+    name: 'edit_code',
+    description: 'Apply code modifications using unified diff format. Creates a backup before editing.',
+    parameters: {
+      type: 'object',
+      properties: {
+        file_path: {
+          type: 'string',
+          description: 'Path to the file to edit'
+        },
+        diff: {
+          type: 'string',
+          description: 'Unified diff string with the changes to apply'
+        },
+        create_backup: {
+          type: 'boolean',
+          description: 'Whether to create a backup before editing (default: true)'
+        }
+      },
+      required: ['file_path', 'diff']
+    }
+  },
+  {
+    name: 'project_tree',
+    description: 'Generate a tree view of the project structure, including files and directories',
+    parameters: {
+      type: 'object',
+      properties: {
+        root_path: {
+          type: 'string',
+          description: 'Root directory to start the tree from (defaults to working directory)'
+        },
+        max_depth: {
+          type: 'number',
+          description: 'Maximum depth to traverse (default: 5, use -1 for unlimited)'
+        },
+        include_hidden: {
+          type: 'boolean',
+          description: 'Whether to include hidden files/directories (default: false)'
+        },
+        exclude_patterns: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Array of glob patterns to exclude (e.g., ["node_modules", "*.log"])'
+        }
+      }
+    }
+  },
+  {
+    name: 'web_search',
+    description: 'Search the web for information using Brave Search API',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'The search query string'
+        },
+        count: {
+          type: 'number',
+          description: 'Number of results to return (1-10, default: 5)'
+        },
+        freshness: {
+          type: 'string',
+          description: 'Filter by freshness: pd (24h), pw (week), pm (month), py (year)'
+        }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'task_plan',
+    description: 'Decompose a complex task into smaller subtasks with clear dependencies',
+    parameters: {
+      type: 'object',
+      properties: {
+        task_description: {
+          type: 'string',
+          description: 'The complex task to decompose'
+        },
+        max_subtasks: {
+          type: 'number',
+          description: 'Maximum number of subtasks to generate (default: 5)'
+        },
+        include_dependencies: {
+          type: 'boolean',
+          description: 'Whether to include dependency information between subtasks (default: true)'
+        }
+      },
+      required: ['task_description']
+    }
+  }
+]

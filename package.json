@@ -7,26 +7,26 @@
   "license": "MIT",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder",
+    "build": "set NODE_ENV=production&& tsc && vite build && electron-builder",
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"electron .\"",
     "electron:build": "vite build && electron-builder"
   },
   "dependencies": {
+    "electron-store": "^8.2.0",
+    "eventsource": "^2.0.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "zustand": "^4.5.2",
-    "electron-store": "^8.2.0",
     "uuid": "^9.0.1",
     "yaml": "^2.4.1",
-    "eventsource": "^2.0.2"
+    "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@types/eventsource": "^1.1.15",
     "@types/node": "^20.12.7",
     "@types/react": "^18.2.79",
     "@types/react-dom": "^18.2.25",
     "@types/uuid": "^9.0.8",
-    "@types/eventsource": "^1.1.15",
     "@vitejs/plugin-react": "^4.2.1",
     "concurrently": "^8.2.2",
     "electron": "^28.3.3",
@@ -47,10 +47,19 @@
       "dist-electron/**/*"
     ],
     "win": {
+      "signAndEditExecutable": false,
       "target": [
         {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
           "target": "dir",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },

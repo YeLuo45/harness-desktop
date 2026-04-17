@@ -1,183 +1,371 @@
-import type { ToolResult } from '../types'
+import type { ToolResult, VerificationConfig, VerificationReport, VerificationLevel, ValidationResult } from '../types'
 
 export interface VerificationResult {
   passed: boolean
   warnings: string[]
   errors: string[]
+  retryRecommended: boolean
+  degradeRecommended: boolean
 }
 
+interface VerificationRuleSet {
+  file_read: RuleSet
+  file_write: RuleSet
+  file_append: RuleSet
+  dir_list: RuleSet
+  bash_execute: RuleSet
+  grep_search: RuleSet
+  glob: RuleSet
+  tool_status: RuleSet
+  edit_code: RuleSet
+  project_tree: RuleSet
+  web_search: RuleSet
+  task_plan: RuleSet
+}
+
+interface RuleSet {
+  critical: Array<(result: ToolResult, config: VerificationConfig) => ValidationResult>
+  warnings: Array<(result: ToolResult) => ValidationResult>
+}
+
+const pass = (): ValidationResult => ({ passed: true })
+const fail = (message: string, severity: 'error' | 'warning' | 'info' = 'error'): ValidationResult => ({
+  passed: false,
+  message,
+  severity
+})
+
 export class VerificationHooks {
-  // Verify file_read result
-  verifyFileRead(result: ToolResult): VerificationResult {
-    const warnings: string[] = []
-    const errors: string[] = []
+  private _config: VerificationConfig
+  private ruleSets: VerificationRuleSet
 
-    if (!result.success) {
-      errors.push(`File read failed: ${result.error}`)
-      return { passed: false, warnings, errors }
-    }
-
-    const data = result.result as { content?: string; lines?: number; size?: number }
-
-    // Check for empty content
-    if (data.content !== undefined && data.content.length === 0) {
-      warnings.push('File is empty')
-    }
-
-    // Check for suspiciously large files
-    if (data.size !== undefined && data.size > 5 * 1024 * 1024) {
-      warnings.push(`Large file (${(data.size / 1024 / 1024).toFixed(2)} MB). Consider reading specific sections.`)
-    }
-
-    // Check for binary-looking content
-    if (data.content !== undefined && /[\x00-\x08\x0E-\x1F]/.test(data.content.slice(0, 1000))) {
-      warnings.push('File may contain binary data')
-    }
-
-    return { passed: errors.length === 0, warnings, errors }
+  constructor(config: VerificationConfig = { level: 'loose', autoRetry: true, maxRetries: 3, degradeOnFailure: true }) {
+    this._config = config
+    this.ruleSets = this.buildRuleSets()
   }
 
-  // Verify file_write result
-  verifyFileWrite(result: ToolResult): VerificationResult {
-    const warnings: string[] = []
-    const errors: string[] = []
-
-    if (!result.success) {
-      errors.push(`File write failed: ${result.error}`)
-      return { passed: false, warnings, errors }
-    }
-
-    const data = result.result as { bytesWritten?: number; path?: string }
-
-    // Check for zero-byte write
-    if (data.bytesWritten === 0) {
-      warnings.push('File was written but contains no data')
-    }
-
-    // Verify the path is within expected directory
-    if (data.path?.includes('..')) {
-      errors.push('File path contains directory traversal')
-    }
-
-    return { passed: errors.length === 0, warnings, errors }
+  setConfig(config: Partial<VerificationConfig>): void {
+    this._config = { ...this._config, ...config }
   }
 
-  // Verify bash_execute result
-  verifyBashExecute(result: ToolResult): VerificationResult {
-    const warnings: string[] = []
-    const errors: string[] = []
+  getConfig(): VerificationConfig {
+    return { ...this._config }
+  }
 
-    if (!result.success) {
-      // Non-zero exit code doesn't always mean failure
-      warnings.push(`Command exited with code ${(result.result as any)?.exitCode || 'unknown'}`)
+  private buildRuleSets(): VerificationRuleSet {
+    return {
+      file_read: {
+        critical: [
+          (r) => r.success ? pass() : fail('File read failed: ' + r.error, 'error'),
+          (r, cfg) => {
+            const data = r.result as { content?: string; size?: number; lines?: number }
+            if (data.size === 0 && data.content !== undefined) {
+              return { passed: cfg.level !== 'strict', message: 'File is empty', severity: 'warning' as const }
+            }
+            return pass()
+          },
+          (r) => {
+            const data = r.result as { size?: number }
+            if (data.size && data.size > 10 * 1024 * 1024) {
+              return fail('File too large (' + (data.size / 1024 / 1024).toFixed(2) + ' MB). Use selective reading.', 'error')
+            }
+            return pass()
+          }
+        ],
+        warnings: [
+          (r) => {
+            const data = r.result as { content?: string }
+            if (data.content && /[\x00-\x08\x0E-\x1F]/.test(data.content.slice(0, 1000))) {
+              return fail('File may contain binary data', 'warning')
+            }
+            return pass()
+          }
+        ]
+      },
+      file_write: {
+        critical: [
+          (r) => r.success ? pass() : fail('File write failed: ' + r.error, 'error'),
+          (r) => {
+            const data = r.result as { path?: string }
+            if (data.path && data.path.includes('..')) {
+              return fail('Path contains directory traversal', 'error')
+            }
+            return pass()
+          }
+        ],
+        warnings: [
+          (r) => {
+            const data = r.result as { bytesWritten?: number }
+            if (data.bytesWritten === 0) {
+              return fail('File was written but contains no data', 'warning')
+            }
+            return pass()
+          }
+        ]
+      },
+      file_append: {
+        critical: [
+          (r) => r.success ? pass() : fail('File append failed: ' + r.error, 'error')
+        ],
+        warnings: []
+      },
+      dir_list: {
+        critical: [
+          (r) => r.success ? pass() : fail('Directory listing failed: ' + r.error, 'error')
+        ],
+        warnings: [
+          (r) => {
+            const data = r.result as Array<{ name: string; type: string }>
+            if (data && data.length > 10000) {
+              return fail('Very large directory (' + data.length + ' entries). Results may be truncated.', 'warning')
+            }
+            return pass()
+          }
+        ]
+      },
+      bash_execute: {
+        critical: [
+          (r) => {
+            if (!r.success || (r.result as any)?.timedOut) {
+              return fail((r.result as any)?.timedOut ? 'Command timed out' : 'Command failed: ' + r.error, 'error')
+            }
+            return pass()
+          },
+          (r) => {
+            const stderr = (r.result as any)?.stderr || ''
+            if (stderr) {
+              const errorPatterns = ['error:', 'Error:', 'ERROR', 'failed', 'Failed', 'exception']
+              const hasError = errorPatterns.some(p => stderr.includes(p))
+              if (hasError) {
+                return fail('stderr contains errors: ' + stderr.slice(0, 200), 'error')
+              }
+            }
+            return pass()
+          }
+        ],
+        warnings: [
+          (r) => {
+            const exitCode = (r.result as any)?.exitCode
+            if (exitCode !== undefined && exitCode !== 0 && r.success) {
+              return fail('Command exited with code ' + exitCode, 'warning')
+            }
+            return pass()
+          },
+          (r) => {
+            const stdout = (r.result as any)?.stdout || ''
+            if (stdout.length > 100000) {
+              return fail('Large output (>100KB). Consider more specific commands.', 'warning')
+            }
+            return pass()
+          }
+        ]
+      },
+      grep_search: {
+        critical: [
+          (r) => r.success ? pass() : fail('Search failed: ' + r.error, 'error')
+        ],
+        warnings: [
+          (r) => {
+            const data = r.result as { matches?: unknown[]; total?: number }
+            if (data.total === 0) {
+              return fail('No matches found', 'warning')
+            }
+            if (data.total && data.total > 1000) {
+              return fail('Large result set (' + data.total + ' matches). Consider refining the search.', 'warning')
+            }
+            return pass()
+          }
+        ]
+      },
+      glob: {
+        critical: [
+          (r) => r.success ? pass() : fail('Glob search failed: ' + r.error, 'error')
+        ],
+        warnings: [
+          (r) => {
+            const data = r.result as { matches?: string[]; total?: number }
+            if (data.total === 0) {
+              return fail('No files matched the pattern', 'warning')
+            }
+            return pass()
+          }
+        ]
+      },
+      tool_status: {
+        critical: [
+          (r) => r.success ? pass() : fail('Status check failed: ' + r.error, 'error')
+        ],
+        warnings: []
+      },
+      edit_code: {
+        critical: [
+          (r) => r.success ? pass() : fail('Code edit failed: ' + r.error, 'error'),
+          (r, cfg) => {
+            const data = r.result as { applied?: boolean; patches?: number }
+            if (r.success && data.patches !== undefined && data.patches === 0) {
+              return { passed: cfg.level !== 'strict', message: 'No patches were applied', severity: 'warning' as const }
+            }
+            return pass()
+          }
+        ],
+        warnings: [
+          (r) => {
+            const data = r.result as { conflicts?: string[] }
+            if (data.conflicts && data.conflicts.length > 0) {
+              return fail('Edit conflicts detected: ' + data.conflicts.join(', '), 'warning')
+            }
+            return pass()
+          }
+        ]
+      },
+      project_tree: {
+        critical: [
+          (r) => r.success ? pass() : fail('Project tree generation failed: ' + r.error, 'error')
+        ],
+        warnings: [
+          (r) => {
+            const data = r.result as { files?: number; depth?: number }
+            if (data.files && data.files > 10000) {
+              return fail('Large project (' + data.files + ' files). Tree may be truncated.', 'warning')
+            }
+            return pass()
+          }
+        ]
+      },
+      web_search: {
+        critical: [
+          (r) => r.success ? pass() : fail('Web search failed: ' + r.error, 'error')
+        ],
+        warnings: [
+          (r) => {
+            const data = r.result as { results?: unknown[] }
+            if (data.results && data.results.length === 0) {
+              return fail('No search results returned', 'warning')
+            }
+            return pass()
+          }
+        ]
+      },
+      task_plan: {
+        critical: [
+          (r) => r.success ? pass() : fail('Task planning failed: ' + r.error, 'error')
+        ],
+        warnings: [
+          (r) => {
+            const data = r.result as { tasks?: unknown[] }
+            if (data.tasks && data.tasks.length === 0) {
+              return fail('No subtasks generated', 'warning')
+            }
+            return pass()
+          }
+        ]
+      }
     }
+  }
 
-    const data = result.result as { stdout?: string; stderr?: string; exitCode?: number; timedOut?: boolean }
-
-    // Check for timeout
-    if (data.timedOut) {
-      errors.push('Command timed out')
-    }
-
-    // Check for stderr output
-    if (data.stderr && data.stderr.trim().length > 0) {
-      // Check for common error patterns
-      const stderr = data.stderr
-      const errorPatterns = ['error:', 'Error:', 'ERROR', 'failed', 'Failed', 'FAILED', 'exception', 'Exception']
-      const hasError = errorPatterns.some(p => stderr.includes(p))
-      if (hasError) {
-        warnings.push(`stderr contains error output: ${stderr.slice(0, 200)}`)
+  verify(result: ToolResult): VerificationResult {
+    if (this._config.level === 'disabled') {
+      return {
+        passed: true,
+        warnings: [],
+        errors: [],
+        retryRecommended: false,
+        degradeRecommended: false
       }
     }
 
-    // Check for very large output (potential issues)
-    if (data.stdout && data.stdout.length > 100000) {
-      warnings.push('Command produced very large output (>100KB). Consider using more specific commands.')
-    }
-
-    return { passed: errors.length === 0, warnings, errors }
-  }
-
-  // Verify grep_search result
-  verifyGrepSearch(result: ToolResult): VerificationResult {
     const warnings: string[] = []
     const errors: string[] = []
+    let retryRecommended = false
+    let degradeRecommended = false
 
-    if (!result.success) {
-      errors.push(`Search failed: ${result.error}`)
-      return { passed: false, warnings, errors }
+    const ruleSet = this.ruleSets[result.toolName as keyof VerificationRuleSet]
+    if (!ruleSet) {
+      if (!result.success) {
+        errors.push('Unknown tool failed: ' + result.error)
+      }
+      return {
+        passed: errors.length === 0,
+        warnings,
+        errors,
+        retryRecommended: false,
+        degradeRecommended: false
+      }
     }
 
-    const data = result.result as { matches?: unknown[]; total?: number }
-
-    if (data.total === 0) {
-      warnings.push('No matches found')
-    }
-
-    if (data.total && data.total > 1000) {
-      warnings.push(`Large number of matches (${data.total}). Results may be truncated.`)
-    }
-
-    return { passed: errors.length === 0, warnings, errors }
-  }
-
-  // Verify glob result
-  verifyGlob(result: ToolResult): VerificationResult {
-    const warnings: string[] = []
-    const errors: string[] = []
-
-    if (!result.success) {
-      errors.push(`Glob search failed: ${result.error}`)
-      return { passed: false, warnings, errors }
-    }
-
-    const data = result.result as { matches?: string[]; total?: number }
-
-    if (data.total === 0) {
-      warnings.push('No files matched the pattern')
-    }
-
-    return { passed: errors.length === 0, warnings, errors }
-  }
-
-  // Verify dir_list result
-  verifyDirList(result: ToolResult): VerificationResult {
-    const warnings: string[] = []
-    const errors: string[] = []
-
-    if (!result.success) {
-      errors.push(`Directory listing failed: ${result.error}`)
-      return { passed: false, warnings, errors }
-    }
-
-    return { passed: true, warnings, errors }
-  }
-
-  // General verification for any tool
-  verify(result: ToolResult): VerificationResult {
-    switch (result.toolName) {
-      case 'file_read':
-        return this.verifyFileRead(result)
-      case 'file_write':
-        return this.verifyFileWrite(result)
-      case 'bash_execute':
-        return this.verifyBashExecute(result)
-      case 'grep_search':
-        return this.verifyGrepSearch(result)
-      case 'glob':
-        return this.verifyGlob(result)
-      case 'dir_list':
-        return this.verifyDirList(result)
-      default:
-        return {
-          passed: result.success,
-          warnings: [],
-          errors: result.success ? [] : [`Unknown tool: ${result.toolName}`]
+    for (const check of ruleSet.critical) {
+      const validation = check(result, this._config)
+      if (!validation.passed) {
+        if (validation.severity === 'error') {
+          errors.push(validation.message || 'Critical check failed')
+        } else {
+          warnings.push(validation.message || 'Check failed')
         }
+      }
+    }
+
+    for (const check of ruleSet.warnings) {
+      const validation = check(result)
+      if (!validation.passed) {
+        warnings.push(validation.message || 'Warning')
+      }
+    }
+
+    if (!result.success && this._config.autoRetry) {
+      retryRecommended = true
+    }
+
+    if (errors.length > 0 && this._config.degradeOnFailure) {
+      degradeRecommended = true
+    }
+
+    const passed = errors.length === 0 && (this._config.level !== 'strict' || warnings.length === 0)
+
+    return {
+      passed,
+      warnings,
+      errors,
+      retryRecommended,
+      degradeRecommended
     }
   }
 
-  // Format verification result for display
+  verifyBatch(results: ToolResult[]): VerificationReport[] {
+    return results.map(result => {
+      const verification = this.verify(result)
+      return {
+        toolName: result.toolName,
+        results: [
+          ...verification.errors.map(m => ({ passed: false, message: m, severity: 'error' as const })),
+          ...verification.warnings.map(m => ({ passed: true, message: m, severity: 'warning' as const }))
+        ],
+        overallPassed: verification.passed,
+        retryRecommended: verification.retryRecommended,
+        degradeRecommended: verification.degradeRecommended
+      }
+    })
+  }
+
+  getBatchSummary(results: ToolResult[]): {
+    totalTools: number
+    passed: number
+    failed: number
+    warnings: number
+    retriesRecommended: number
+    degradesRecommended: number
+  } {
+    const reports = this.verifyBatch(results)
+
+    return {
+      totalTools: results.length,
+      passed: reports.filter(r => r.overallPassed).length,
+      failed: reports.filter(r => !r.overallPassed).length,
+      warnings: reports.reduce((sum, r) => sum + r.results.filter(v => v.severity === 'warning').length, 0),
+      retriesRecommended: reports.filter(r => r.retryRecommended).length,
+      degradesRecommended: reports.filter(r => r.degradeRecommended).length
+    }
+  }
+
   formatVerificationMessage(result: VerificationResult): string {
     if (result.passed && result.warnings.length === 0) {
       return ''
@@ -186,23 +374,59 @@ export class VerificationHooks {
     const parts: string[] = []
 
     if (!result.passed) {
-      parts.push(`❌ Errors: ${result.errors.join('; ')}`)
+      parts.push('Errors: ' + result.errors.join('; '))
     }
 
     if (result.warnings.length > 0) {
-      parts.push(`⚠️ Warnings: ${result.warnings.join('; ')}`)
+      parts.push('Warnings: ' + result.warnings.join('; '))
     }
 
     return parts.join('\n')
   }
+
+  formatBatchReport(reports: VerificationReport[]): string {
+    const summary = this.getBatchSummary(reports.map(r => ({ toolName: r.toolName, arguments: {}, result: null, success: r.overallPassed, timestamp: 0 } as any)))
+
+    const lines: string[] = []
+    lines.push('Verification Report: ' + summary.passed + '/' + summary.totalTools + ' passed')
+
+    if (summary.warnings > 0) {
+      lines.push('' + summary.warnings + ' warning(s)')
+    }
+
+    if (summary.retriesRecommended > 0) {
+      lines.push('' + summary.retriesRecommended + ' retry(s) recommended')
+    }
+
+    if (summary.degradesRecommended > 0) {
+      lines.push('' + summary.degradesRecommended + ' degrade(s) recommended')
+    }
+
+    const failures = reports.filter(r => !r.overallPassed)
+    if (failures.length > 0) {
+      lines.push('\nFailures:')
+      for (const failure of failures) {
+        const errorMsgs = failure.results.filter(r => r.severity === 'error').map(r => r.message)
+        if (errorMsgs.length > 0) {
+          lines.push('  - ' + failure.toolName + ': ' + errorMsgs.join(', '))
+        }
+      }
+    }
+
+    return lines.join('\n')
+  }
 }
 
-// Singleton
 let verificationHooksInstance: VerificationHooks | null = null
 
 export function getVerificationHooks(): VerificationHooks {
   if (!verificationHooksInstance) {
     verificationHooksInstance = new VerificationHooks()
   }
+  return verificationHooksInstance
+}
+
+export function initVerificationHooks(config?: VerificationConfig): VerificationHooks {
+  verificationHooksInstance = new VerificationHooks(config)
   return verificationHooksInstance
 }

@@ -20,6 +20,20 @@ const defaultConfig: AppConfig = {
   riskConfirmation: {
     medium: true,
     high: true
+  },
+  // v2: Verification config
+  verification: {
+    level: 'loose',
+    autoRetry: true,
+    maxRetries: 3,
+    degradeOnFailure: true
+  },
+  // v2: SubAgent config
+  subAgent: {
+    enabled: false,
+    maxConcurrentAgents: 4,
+    maxKVCacheSize: 128000,
+    maxSubtasks: 5
   }
 }
 
@@ -42,7 +56,21 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
           modelName: (stored.modelName as string) || 'gpt-4o',
           workDir: (stored.workDir as string) || '',
           contextWindow: (stored.contextWindow as number) || 128000,
-          riskConfirmation: (stored.riskConfirmation as { medium: boolean; high: boolean }) || { medium: true, high: true }
+          riskConfirmation: (stored.riskConfirmation as { medium: boolean; high: boolean }) || { medium: true, high: true },
+          // v2: Load verification config
+          verification: (stored.verification as AppConfig['verification']) || {
+            level: 'loose',
+            autoRetry: true,
+            maxRetries: 3,
+            degradeOnFailure: true
+          },
+          // v2: Load sub-agent config
+          subAgent: (stored.subAgent as AppConfig['subAgent']) || {
+            enabled: false,
+            maxConcurrentAgents: 4,
+            maxKVCacheSize: 128000,
+            maxSubtasks: 5
+          }
         }
       })
     } catch (error) {
