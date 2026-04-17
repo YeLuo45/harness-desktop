@@ -1,0 +1,8 @@
+node_modules/
+dist/
+release/
+win-unpacked/
+*.log
+.DS_Store
+.env
+.env.local
