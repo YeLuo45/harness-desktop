@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "vite",
-    "build": "set NODE_ENV=production&& tsc && vite build && electron-builder",
+    "build": "tsc && vite build && electron-builder",
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"electron .\"",
     "electron:build": "vite build && electron-builder"

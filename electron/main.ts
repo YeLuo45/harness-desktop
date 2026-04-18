@@ -101,7 +101,12 @@ async function createWindow() {
     mainWindow.loadURL('http://127.0.0.1:5173')
     mainWindow.webContents.openDevTools()
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+    // Use app.getAppPath() to correctly resolve path inside ASAR
+    const indexPath = app.isPackaged
+      ? `file://${path.join(app.getAppPath(), 'dist', 'index.html')}`
+      : path.join(__dirname, '..', 'dist', 'index.html')
+    console.log('[MAIN] Loading production index from:', indexPath)
+    mainWindow.loadURL(indexPath)
   }
 
   mainWindow.on('closed', () => {
