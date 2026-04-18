@@ -6,20 +6,19 @@ import { SandboxManager } from './sandboxManager'
 import { SystemPromptEngine } from './systemPromptEngine'
 import Store from 'electron-store'
 import fs from 'fs'
+import { log, registerLogIPC, createModuleLogger } from './main/logger'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+const logger = createModuleLogger('Main');
+
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
-  console.error('[MAIN] Uncaught Exception:', error)
-  fs.appendFileSync(
-    path.join(app.getPath('userData'), 'error.log'),
-    `[${new Date().toISOString()}] Uncaught Exception: ${error.stack}\n`
-  )
+  logger.error('Uncaught Exception:', error.message, error.stack)
 })
 
-process.on('unhandledRejection', (reason) => {
-  console.error('[MAIN] Unhandled Rejection:', reason)
+process.on('unhandledRejection', (reason: any) => {
+  logger.error('Unhandled Rejection:', reason?.message || reason, reason?.stack)
 })
 
 const store = new Store({
@@ -66,24 +65,24 @@ async function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
-    console.log('[MAIN] Window ready to show')
+    logger.info('Window ready to show')
   })
 
   mainWindow.webContents.on('did-finish-load', () => {
-    console.log('[MAIN] WebContents did-finish-load')
+    logger.info('WebContents did-finish-load')
   })
 
   mainWindow.webContents.on('did-fail-load', (_, errorCode, errorDescription) => {
-    console.log('[MAIN] WebContents did-fail-load:', errorCode, errorDescription)
+    logger.warn('WebContents did-fail-load:', errorCode, errorDescription)
   })
 
   mainWindow.webContents.on('render-process-gone', (_, details) => {
-    console.log('[MAIN] WebContents render-process-gone:', details.reason)
+    logger.warn('WebContents render-process-gone:', details.reason)
   })
 
   mainWindow.webContents.on('console-message', (_, level, message, line, sourceId) => {
     if (level >= 2) { // Error and critical
-      console.log(`[MAIN] Console error [${level}]: ${message} (${sourceId}:${line})`)
+      logger.error(`Console error [${level}]: ${message} (${sourceId}:${line})`)
     }
   })
 
@@ -105,7 +104,7 @@ async function createWindow() {
     const indexPath = app.isPackaged
       ? `file://${path.join(app.getAppPath(), 'dist', 'index.html')}`
       : path.join(__dirname, '..', 'dist', 'index.html')
-    console.log('[MAIN] Loading production index from:', indexPath)
+    logger.info('Loading production index from:', indexPath)
     mainWindow.loadURL(indexPath)
   }
 
@@ -145,13 +144,13 @@ ipcMain.handle('tool:execute', async (_, toolCall: {
   arguments: Record<string, unknown>
   riskLevel?: 'low' | 'medium' | 'high'
 }) => {
-  console.log('[MAIN] Tool call received:', toolCall.name, toolCall.arguments)
+  logger.info('Tool call received:', toolCall.name, toolCall.arguments)
   try {
     if (!toolExecutor) throw new Error('ToolExecutor not initialized')
     const result = await toolExecutor.execute(toolCall.name, toolCall.arguments)
     return { success: true, result }
   } catch (error: any) {
-    console.error('[MAIN] Tool execution error:', error)
+    logger.error('Tool execution error:', error)
     return { success: false, error: error.message }
   }
 })
@@ -256,9 +255,12 @@ ipcMain.handle('fs:exists', async (_, filePath: string) => {
   }
 })
 
+// Register log IPC handlers
+registerLogIPC(ipcMain);
+
 // App lifecycle
 app.whenReady().then(() => {
-  console.log('[MAIN] App ready, creating window...')
+  logger.info('App ready, creating window...')
   createWindow()
 })
 
@@ -275,5 +277,5 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', () => {
-  console.log('[MAIN] App quitting...')
+  logger.info('App quitting...')
 })

@@ -14,6 +14,7 @@ import ChatInput from './components/ChatInput'
 import PlanView from './components/PlanView'
 import SettingsPanel from './components/SettingsPanel'
 import WelcomeScreen from './components/WelcomeScreen'
+import { LogViewer } from './components/LogViewer'
 
 type View = 'chat' | 'settings'
 
@@ -22,6 +23,7 @@ function App() {
   const [showPlan, setShowPlan] = useState(false)
   // v2: Track sub-agent status
   const [subAgentStatus, setSubAgentStatus] = useState<string>('')
+  const [showLogViewer, setShowLogViewer] = useState(false)
 
   const {
     messages,
@@ -538,6 +540,18 @@ function App() {
     })
   }, [setPlan, setMode, addMessage])
 
+  // Ctrl+Shift+L to toggle log viewer
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'L') {
+        e.preventDefault()
+        setShowLogViewer(v => !v)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
   return (
     <div className="app-container">
       <Header onSettingsClick={() => setView(view === 'settings' ? 'chat' : 'settings')} />
@@ -579,6 +593,8 @@ function App() {
           <SettingsPanel />
         )}
       </div>
+
+      {showLogViewer && <LogViewer onClose={() => setShowLogViewer(false)} />}
     </div>
   )
 }

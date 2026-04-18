@@ -51,5 +51,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
     writeFile: (filePath: string, content: string) => ipcRenderer.invoke('fs:writeFile', filePath, content),
     exists: (filePath: string) => ipcRenderer.invoke('fs:exists', filePath)
+  },
+
+  // Log viewer
+  log: {
+    getEntries: (options?: { level?: string; module?: string; limit?: number }) =>
+      ipcRenderer.invoke('log:getEntries', options),
+    export: () => ipcRenderer.invoke('log:export'),
+    clear: () => ipcRenderer.invoke('log:clear'),
+    getBuffer: () => ipcRenderer.invoke('log:getBuffer'),
   }
 })
