@@ -130,3 +130,11 @@ Decompose complex tasks into subtasks
 3. If validation fails and autoRetry=true → retry up to maxRetries
 4. If still failing and degradeOnFailure=true → recommend degrade
 5. Warnings/errors collected and displayed to user
+
+## v2 Delivery Status
+
+**Delivered:** 2026-05-02
+**Build Status:** Vite build ✅ successful, electron-builder ⚠️ WSL environment limitation
+**Bug Fix:** Fixed `llmBridge.ts` using `MVP_TOOLS` instead of `V2_TOOLS`
+
+## v3 Roadmap (Planned)

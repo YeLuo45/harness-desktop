@@ -1,4 +1,4 @@
-import { createModelAdapter, MVP_TOOLS, type ModelAdapter } from './modelAdapters'
+import { createModelAdapter, V2_TOOLS, type ModelAdapter } from './modelAdapters'
 import type { ChatMessage, ToolCall, ToolDefinition, ToolResult, ExecutionPlan, PlanStep } from '../types'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -34,7 +34,7 @@ export class LLMBridge {
       return this.streamChat(messages, streamCallbacks)
     }
 
-    const response = await this.adapter.chat(messages, this.systemPrompt, MVP_TOOLS)
+    const response = await this.adapter.chat(messages, this.systemPrompt, V2_TOOLS)
     return {
       content: response.content,
       toolCalls: response.toolCalls || []
@@ -51,7 +51,7 @@ export class LLMBridge {
       this.adapter.stream({
         messages,
         systemPrompt: this.systemPrompt,
-        tools: MVP_TOOLS,
+        tools: V2_TOOLS,
         onChunk: (chunk) => {
           fullContent += chunk
           callbacks.onChunk(chunk)
