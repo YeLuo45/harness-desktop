@@ -98,6 +98,7 @@ export interface PlanStep {
   status: 'pending' | 'executing' | 'completed' | 'failed' | 'skipped'
   result?: unknown
   error?: string
+  order: number  // Step execution order
 }
 
 export interface MemoryPointer {

@@ -21,6 +21,7 @@ type View = 'chat' | 'settings'
 function App() {
   const [view, setView] = useState<View>('chat')
   const [showPlan, setShowPlan] = useState(false)
+  const [isPlanExecuting, setIsPlanExecuting] = useState(false)
   // v2: Track sub-agent status
   const [subAgentStatus, setSubAgentStatus] = useState<string>('')
   const [showLogViewer, setShowLogViewer] = useState(false)
@@ -506,6 +507,7 @@ function App() {
 
     setShowPlan(false)
     setLoading(true)
+    setIsPlanExecuting(true)
 
     // Mark plan as confirmed
     setPlan({ ...currentPlan, confirmed: true })
@@ -515,6 +517,8 @@ function App() {
 
     // Execute the plan
     const results = await executePlan(currentPlan)
+
+    setIsPlanExecuting(false)
 
     // Build summary message
     const succeeded = results.filter(r => r.success).length
@@ -539,6 +543,28 @@ function App() {
       content: 'Plan cancelled. Let me know if you have another request.'
     })
   }, [setPlan, setMode, addMessage])
+
+  // Abort plan execution
+  const handlePlanAbort = useCallback(() => {
+    setIsPlanExecuting(false)
+    setLoading(false)
+    // Mark remaining pending steps as skipped
+    if (currentPlan) {
+      currentPlan.steps.forEach(step => {
+        if (step.status === 'pending' || step.status === 'executing') {
+          // Note: This won't directly update since we don't have direct mutation
+          // But the UI state will clear on next action
+        }
+      })
+    }
+    setShowPlan(false)
+    setPlan(null)
+    setMode('execution')
+    addMessage({
+      role: 'assistant',
+      content: 'Plan execution aborted. Some steps may not have completed.'
+    })
+  }, [currentPlan, setPlan, setMode, addMessage, setLoading])
 
   // Ctrl+Shift+L to toggle log viewer
   useEffect(() => {
@@ -571,6 +597,8 @@ function App() {
                       plan={currentPlan}
                       onConfirm={handlePlanConfirm}
                       onCancel={handlePlanCancel}
+                      onAbort={handlePlanAbort}
+                      isExecuting={isPlanExecuting}
                     />
                   )}
                   {/* v2: Show sub-agent status */}

@@ -158,7 +158,8 @@ Do not include tool_status in the plan.
           toolName: 'bash_execute',
           arguments: { command: 'echo "Manual intervention needed"' },
           riskLevel: 'low',
-          status: 'pending'
+          status: 'pending',
+          order: 0
         }],
         risks: ['Could not auto-generate plan'],
         totalSteps: 1,

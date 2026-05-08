@@ -4,9 +4,11 @@ interface PlanViewProps {
   plan: ExecutionPlan
   onConfirm: () => void
   onCancel: () => void
+  onAbort?: () => void  // Abort execution mid-way
+  isExecuting?: boolean  // Whether plan is currently executing
 }
 
-function PlanView({ plan, onConfirm, onCancel }: PlanViewProps) {
+function PlanView({ plan, onConfirm, onCancel, onAbort, isExecuting }: PlanViewProps) {
   const getStepStatusClass = (status: string) => {
     switch (status) {
       case 'completed': return 'completed'
@@ -103,21 +105,38 @@ function PlanView({ plan, onConfirm, onCancel }: PlanViewProps) {
       )}
 
       <div className="plan-confirm-bar">
-        <button
-          className="btn-primary"
-          onClick={onConfirm}
-          disabled={plan.steps.some(s => s.status === 'executing')}
-          style={{ flex: 1 }}
-        >
-          ✓ Confirm & Execute
-        </button>
-        <button
-          className="btn-secondary"
-          onClick={onCancel}
-          style={{ flex: 1 }}
-        >
-          Cancel
-        </button>
+        {!isExecuting ? (
+          <>
+            <button
+              className="btn-primary"
+              onClick={onConfirm}
+              disabled={plan.steps.some(s => s.status === 'executing')}
+              style={{ flex: 1 }}
+            >
+              ✓ Confirm & Execute
+            </button>
+            <button
+              className="btn-secondary"
+              onClick={onCancel}
+              style={{ flex: 1 }}
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              className="btn-danger"
+              onClick={onAbort}
+              style={{ flex: 1 }}
+            >
+              ■ Abort Execution
+            </button>
+            <div style={{ flex: 1, textAlign: 'center', padding: '10px', color: 'var(--text-secondary)' }}>
+              Executing... {plan.steps.filter(s => s.status === 'completed').length}/{plan.steps.length} steps
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
