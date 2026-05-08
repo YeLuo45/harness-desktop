@@ -1,8 +1,16 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
-import type { Message, MemoryPointer, ExecutionPlan, PlanStep, ToolCallMode } from '../types'
+import type { Message, MemoryPointer, ExecutionPlan, PlanStep, ToolCallMode, SubAgent, SubAgentResult } from '../types'
 
-interface AppState {
+// Collaboration state types
+interface CollaborationState {
+  isCollaborationActive: boolean
+  activeAgents: SubAgent[]
+  collaborationResults: SubAgentResult[]
+  currentCollaborationSummary: string
+}
+
+interface AppState extends CollaborationState {
   // Messages
   messages: Message[]
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void
@@ -53,6 +61,13 @@ interface AppState {
   verificationWarnings: VerificationWarning[]
   addWarning: (warning: Omit<VerificationWarning, 'id' | 'timestamp'>) => void
   clearWarnings: () => void
+
+  // Collaboration state management
+  setCollaborationActive: (active: boolean, agents?: SubAgent[]) => void
+  addCollaborationResult: (result: SubAgentResult) => void
+  updateAgentInCollaboration: (agentId: string, updates: Partial<SubAgent>) => void
+  clearCollaborationResults: () => void
+  setCollaborationSummary: (summary: string) => void
 }
 
 interface VerificationWarning {
@@ -64,6 +79,12 @@ interface VerificationWarning {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
+  // Collaboration state
+  isCollaborationActive: false,
+  activeAgents: [],
+  collaborationResults: [],
+  currentCollaborationSummary: '',
+
   // Messages
   messages: [],
   addMessage: (message) =>
@@ -238,5 +259,28 @@ export const useAppStore = create<AppState>((set, get) => ({
         { ...warning, id: uuidv4(), timestamp: Date.now() }
       ]
     })),
-  clearWarnings: () => set({ verificationWarnings: [] })
+  clearWarnings: () => set({ verificationWarnings: [] }),
+
+  // Collaboration state management
+  setCollaborationActive: (active, agents) =>
+    set({
+      isCollaborationActive: active,
+      activeAgents: agents || []
+    }),
+
+  addCollaborationResult: (result) =>
+    set((state) => ({
+      collaborationResults: [...state.collaborationResults, result]
+    })),
+
+  updateAgentInCollaboration: (agentId, updates) =>
+    set((state) => ({
+      activeAgents: state.activeAgents.map((agent) =>
+        agent.id === agentId ? { ...agent, ...updates } : agent
+      )
+    })),
+
+  clearCollaborationResults: () => set({ collaborationResults: [] }),
+
+  setCollaborationSummary: (summary) => set({ currentCollaborationSummary: summary })
 }))

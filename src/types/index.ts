@@ -200,6 +200,28 @@ export interface ToolParamDef {
 }
 
 // ==========================================
+// v2: Multi-Agent Collaboration Types
+// ==========================================
+
+export type AgentRole = 'orchestrator' | 'code_reviewer' | 'test_generator' | 'refactorer'
+
+export const AgentCapabilities: Record<AgentRole, readonly string[]> = {
+  orchestrator: ['plan', 'delegate', 'aggregate'],
+  code_reviewer: ['review', 'suggest', 'approve'],
+  test_generator: ['generate', 'validate', 'coverage'],
+  refactorer: ['extract', 'inline', 'rename', 'move']
+}
+
+export interface AgentConfig {
+  id: string
+  name: string
+  role: AgentRole
+  maxConcurrentTasks: number
+  timeout: number
+  retryOnFailure: boolean
+}
+
+// ==========================================
 // v2: Sub Agent Types
 // ==========================================
 

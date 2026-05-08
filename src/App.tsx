@@ -5,6 +5,7 @@ import { initLLMBridge, getLLMBridge, LLMBridge } from './services/llmBridge'
 import { initContextManager, getContextManager } from './services/contextManager'
 import { getVerificationHooks, initVerificationHooks } from './services/verificationHooks'
 import { initSubAgentManager, getSubAgentManager } from './services/subAgentManager'
+import { initMultiAgentEngine, getMultiAgentEngine } from './services/multiAgentEngine'
 import { V2_TOOLS } from './services/modelAdapters'
 import type { Message, ToolResult, ExecutionPlan, PlanStep, ChatMessage, VerificationConfig, SubAgentResult } from './types'
 import Header from './components/Header'
@@ -12,6 +13,7 @@ import Sidebar from './components/Sidebar'
 import ChatMessages from './components/ChatMessages'
 import ChatInput from './components/ChatInput'
 import PlanView from './components/PlanView'
+import CollaborationView, { agentsToCollaborationView, getActiveTasks } from './components/CollaborationView'
 import SettingsPanel from './components/SettingsPanel'
 import WelcomeScreen from './components/WelcomeScreen'
 import { LogViewer } from './components/LogViewer'
@@ -25,6 +27,8 @@ function App() {
   // v2: Track sub-agent status
   const [subAgentStatus, setSubAgentStatus] = useState<string>('')
   const [showLogViewer, setShowLogViewer] = useState(false)
+  // v2: Collaboration mode
+  const [showCollaboration, setShowCollaboration] = useState(false)
 
   const {
     messages,
@@ -38,7 +42,10 @@ function App() {
     setPlan,
     updatePlanStep,
     addWarning,
-    clearWarnings
+    clearWarnings,
+    isCollaborationActive,
+    activeAgents,
+    setCollaborationActive
   } = useAppStore()
 
   const { config, loadConfig } = useConfigStore()
@@ -79,6 +86,12 @@ function App() {
           console.log('[SubAgent] Agent completed:', result.agentId, result.success)
           setSubAgentStatus(`Sub-agent completed: ${result.success ? 'success' : 'failed'}`)
         }
+      })
+
+      // v2: Initialize multi-agent engine for collaboration
+      initMultiAgentEngine({
+        maxConcurrentAgents: config.subAgent?.maxConcurrentAgents || 4,
+        maxKVCacheSize: config.subAgent?.maxKVCacheSize || 128000
       })
 
       // Set tool executor callback
@@ -464,9 +477,13 @@ function App() {
     systemPrompt: string
   ) => {
     const subAgentManager = getSubAgentManager()
+    const multiAgentEngine = getMultiAgentEngine()
 
     // Create a sub-agent for this task
     const agent = subAgentManager.createAgent('task-' + Date.now())
+
+    // Set collaboration active with this agent
+    setCollaborationActive(true, [agent])
 
     // Share KV cache from parent context
     const contextManager = getContextManager()
@@ -638,6 +655,15 @@ function App() {
                   {/* v2: Show sub-agent status */}
                   {subAgentStatus && (
                     <div className="sub-agent-status">{subAgentStatus}</div>
+                  )}
+                  {/* v2: Show collaboration view */}
+                  {showCollaboration && isCollaborationActive && (
+                    <CollaborationView
+                      agents={agentsToCollaborationView(activeAgents)}
+                      activeTasks={getActiveTasks(activeAgents)}
+                      onAgentSelect={(agentId) => console.log('Selected agent:', agentId)}
+                      onTaskSelect={(taskId) => console.log('Selected task:', taskId)}
+                    />
                   )}
                 </>
               )}
