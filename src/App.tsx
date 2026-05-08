@@ -148,20 +148,33 @@ function App() {
 
   // Execute a plan step
   const executePlanStep = useCallback(async (step: PlanStep): Promise<ToolResult> => {
-    updatePlanStep(step.id, { status: 'executing' })
+    updatePlanStep(step.id, { status: 'executing', verificationStatus: 'pending' })
 
     const result = await executeTool(step.toolName, step.arguments)
-
-    updatePlanStep(step.id, {
-      status: result.success ? 'completed' : 'failed',
-      result: result.result,
-      error: result.error
-    })
 
     // v2: Run verification using enhanced background classifier
     const verification = getVerificationHooks()
     const verificationResult = verification.verify(result)
     const verificationConfig = verification.getConfig()
+
+    // Determine verification status
+    let verificationStatus: 'passed' | 'warning' | 'failed' = 'passed'
+    if (!verificationResult.passed) {
+      verificationStatus = 'failed'
+    } else if (verificationResult.warnings.length > 0) {
+      verificationStatus = 'warning'
+    }
+
+    const verificationMessage = verification.formatVerificationMessage(verificationResult)
+
+    updatePlanStep(step.id, {
+      status: result.success ? 'completed' : 'failed',
+      result: result.result,
+      error: result.error,
+      verificationStatus,
+      verificationMessage,
+      warnings: verificationResult.warnings
+    })
 
     if (!verificationResult.passed || verificationResult.warnings.length > 0) {
       const msg = verification.formatVerificationMessage(verificationResult)
@@ -176,12 +189,26 @@ function App() {
       // v2: Handle auto-retry if verification recommends it
       if (verificationResult.retryRecommended && verificationConfig.autoRetry) {
         console.log('[Verification] Retrying failed step:', step.id)
+        updatePlanStep(step.id, { status: 'executing' }) // Show retrying state
         const retryResult = await executeTool(step.toolName, step.arguments)
+
+        // Re-verify after retry
+        const retryVerification = verification.verify(retryResult)
+        let retryVerificationStatus: 'passed' | 'warning' | 'failed' = 'passed'
+        if (!retryVerification.passed) {
+          retryVerificationStatus = 'failed'
+        } else if (retryVerification.warnings.length > 0) {
+          retryVerificationStatus = 'warning'
+        }
+
         // Update with retry result
         updatePlanStep(step.id, {
           result: retryResult.result,
           error: retryResult.error,
-          status: retryResult.success ? 'completed' : 'failed'
+          status: retryResult.success ? 'completed' : 'failed',
+          verificationStatus: retryVerificationStatus,
+          verificationMessage: verification.formatVerificationMessage(retryVerification),
+          warnings: retryVerification.warnings
         })
       }
     }
@@ -520,13 +547,20 @@ function App() {
 
     setIsPlanExecuting(false)
 
-    // Build summary message
+    // Build summary message with verification stats
     const succeeded = results.filter(r => r.success).length
     const failed = results.filter(r => !r.success).length
 
+    // Calculate verification stats from current plan
+    const verificationStats = {
+      passed: (currentPlan?.steps || []).filter(s => s.verificationStatus === 'passed').length,
+      warnings: (currentPlan?.steps || []).filter(s => s.verificationStatus === 'warning').length,
+      failed: (currentPlan?.steps || []).filter(s => s.verificationStatus === 'failed').length
+    }
+
     addMessage({
       role: 'assistant',
-      content: `Plan executed.\n\n✅ ${succeeded} step(s) completed successfully${failed > 0 ? `\n❌ ${failed} step(s) failed` : ''}`,
+      content: `Plan executed.\n\n✅ ${succeeded} step(s) completed successfully${failed > 0 ? `\n❌ ${failed} step(s) failed` : ''}${verificationStats.passed > 0 ? `\n📋 Verification: ${verificationStats.passed} passed${verificationStats.warnings > 0 ? ` | ${verificationStats.warnings} warnings` : ''}${verificationStats.failed > 0 ? ` | ${verificationStats.failed} failed` : ''}` : ''}`,
       mode: 'execution'
     })
 

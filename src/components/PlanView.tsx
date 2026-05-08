@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { ExecutionPlan } from '../types'
 
 interface PlanViewProps {
@@ -9,6 +10,8 @@ interface PlanViewProps {
 }
 
 function PlanView({ plan, onConfirm, onCancel, onAbort, isExecuting }: PlanViewProps) {
+  const [expandedWarnings, setExpandedWarnings] = useState<Set<string>>(new Set())
+
   const getStepStatusClass = (status: string) => {
     switch (status) {
       case 'completed': return 'completed'
@@ -29,6 +32,44 @@ function PlanView({ plan, onConfirm, onCancel, onAbort, isExecuting }: PlanViewP
     }
   }
 
+  const getVerificationIcon = (verificationStatus?: string) => {
+    switch (verificationStatus) {
+      case 'passed': return '✓'
+      case 'warning': return '⚠'
+      case 'failed': return '✗'
+      default: return null
+    }
+  }
+
+  const getVerificationClass = (verificationStatus?: string) => {
+    switch (verificationStatus) {
+      case 'passed': return 'verification-passed'
+      case 'warning': return 'verification-warning'
+      case 'failed': return 'verification-failed'
+      default: return ''
+    }
+  }
+
+  const toggleWarnings = (stepId: string) => {
+    setExpandedWarnings(prev => {
+      const next = new Set(prev)
+      if (next.has(stepId)) {
+        next.delete(stepId)
+      } else {
+        next.add(stepId)
+      }
+      return next
+    })
+  }
+
+  // Calculate verification summary
+  const verificationSummary = {
+    total: plan.steps.length,
+    passed: plan.steps.filter(s => s.verificationStatus === 'passed').length,
+    warnings: plan.steps.filter(s => s.verificationStatus === 'warning').length,
+    failed: plan.steps.filter(s => s.verificationStatus === 'failed').length
+  }
+
   return (
     <div className="plan-container" style={{ margin: '0 20px 16px' }}>
       <div className="plan-header">
@@ -40,6 +81,13 @@ function PlanView({ plan, onConfirm, onCancel, onAbort, isExecuting }: PlanViewP
         {plan.risks.length > 0 && (
           <span style={{ color: 'var(--warning)', marginLeft: '12px' }}>
             ⚠️ {plan.risks.length} risk(s) identified
+          </span>
+        )}
+        {isExecuting && (
+          <span style={{ marginLeft: '12px' }}>
+            | <span style={{ color: 'var(--success)' }}>{verificationSummary.passed} passed</span>
+            {verificationSummary.warnings > 0 && <span style={{ color: 'var(--warning)' }}>, {verificationSummary.warnings} warnings</span>}
+            {verificationSummary.failed > 0 && <span style={{ color: 'var(--error)' }}>, {verificationSummary.failed} failed</span>}
           </span>
         )}
       </div>
@@ -61,6 +109,16 @@ function PlanView({ plan, onConfirm, onCancel, onAbort, isExecuting }: PlanViewP
                 <span className={`risk-badge risk-${step.riskLevel}`} style={{ marginLeft: '8px' }}>
                   {step.riskLevel}
                 </span>
+                {step.verificationStatus && (
+                  <span
+                    className={`verification-badge ${getVerificationClass(step.verificationStatus)}`}
+                    title={step.verificationMessage || `Verification ${step.verificationStatus}`}
+                    style={{ marginLeft: '8px', cursor: 'pointer' }}
+                    onClick={() => step.warnings && step.warnings.length > 0 && toggleWarnings(step.id)}
+                  >
+                    {getVerificationIcon(step.verificationStatus)}
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
                 {step.description}
@@ -78,6 +136,26 @@ function PlanView({ plan, onConfirm, onCancel, onAbort, isExecuting }: PlanViewP
               {step.error && (
                 <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--error)' }}>
                   Error: {step.error}
+                </div>
+              )}
+              {/* Expandable warnings */}
+              {step.warnings && step.warnings.length > 0 && (
+                <div style={{ marginTop: '6px' }}>
+                  <div
+                    style={{ fontSize: '11px', color: 'var(--warning)', cursor: 'pointer' }}
+                    onClick={() => toggleWarnings(step.id)}
+                  >
+                    {expandedWarnings.has(step.id) ? '▼' : '▶'} {step.warnings.length} warning(s)
+                  </div>
+                  {expandedWarnings.has(step.id) && (
+                    <div style={{ marginTop: '4px', paddingLeft: '12px' }}>
+                      {step.warnings.map((w, i) => (
+                        <div key={i} style={{ fontSize: '11px', color: 'var(--warning)', marginBottom: '2px' }}>
+                          ⚠ {w}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

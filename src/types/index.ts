@@ -99,6 +99,10 @@ export interface PlanStep {
   result?: unknown
   error?: string
   order: number  // Step execution order
+  // v2: Verification Hooks integration
+  verificationStatus?: 'pending' | 'passed' | 'warning' | 'failed'
+  verificationMessage?: string
+  warnings?: string[]
 }
 
 export interface MemoryPointer {
