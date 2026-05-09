@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import type { MemoryPointer, ChatMessage, ToolResult } from '../types'
+import { getLongTermMemoryService } from './longTermMemory'
 
 const MAX_CONTEXT_TOKENS = 128000
 const COMPRESSION_THRESHOLD = 0.8 // 80% of max
@@ -211,6 +212,44 @@ export class ContextManager {
 
     this.updateTokenCount()
     return merged
+  }
+
+  // ============================================
+  // Long-Term Memory Integration
+  // ============================================
+
+  /**
+   * Persist current memory to long-term storage
+   * Call this periodically or before page unload
+   */
+  async persistToLongTerm(): Promise<void> {
+    try {
+      const ltm = getLongTermMemoryService()
+      for (const pointer of this.memory) {
+        await ltm.saveMemoryPointer(pointer)
+      }
+    } catch (error) {
+      console.warn('Failed to persist memory to long-term storage:', error)
+    }
+  }
+
+  /**
+   * Restore memory from long-term storage
+   * Call this on initialization
+   */
+  async restoreFromLongTerm(): Promise<number> {
+    try {
+      const ltm = getLongTermMemoryService()
+      const restored = await ltm.restoreContextSnapshot()
+      if (restored.length > 0) {
+        this.memory = restored
+        this.updateTokenCount()
+        return restored.length
+      }
+    } catch (error) {
+      console.warn('Failed to restore memory from long-term storage:', error)
+    }
+    return 0
   }
 
   // Private helpers

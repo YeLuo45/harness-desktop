@@ -315,3 +315,37 @@ export interface VerificationReport {
   retryRecommended: boolean
   degradeRecommended: boolean
 }
+
+// ============================================
+// v2: Long-Term Memory Types
+// ============================================
+
+export interface VerificationPattern {
+  id: string
+  toolName: string
+  pattern: string  // Regex pattern for the tool call
+  validationRule: string
+  successCount: number
+  lastUsed: number
+}
+
+export interface UserPreferences {
+  theme: 'light' | 'dark'
+  language: string
+  model: ModelProvider
+  modelName: string
+  contextWindow: number
+  riskConfirmation: {
+    medium: boolean
+    high: boolean
+  }
+}
+
+// Storage backend types
+export type StorageTier = 'hot' | 'warm' | 'cold'
+
+export interface StorageStats {
+  tier: StorageTier
+  keyCount: number
+  totalSizeBytes: number
+}

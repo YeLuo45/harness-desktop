@@ -58,6 +58,16 @@ function App() {
     loadConfig()
     initContextManager()
 
+    // v2: Restore memory from long-term storage
+    const restoreMemory = async () => {
+      const contextManager = getContextManager()
+      const restored = await contextManager.restoreFromLongTerm()
+      if (restored > 0) {
+        console.log(`[LongTermMemory] Restored ${restored} memory pointers`)
+      }
+    }
+    restoreMemory()
+
     // v2: Initialize verification hooks with config
     const verificationConfig: VerificationConfig = {
       level: config.verification?.level || 'loose',
@@ -66,6 +76,19 @@ function App() {
       degradeOnFailure: config.verification?.degradeOnFailure ?? true
     }
     initVerificationHooks(verificationConfig)
+  }, [])
+
+  // Persist memory to long-term storage on page unload
+  useEffect(() => {
+    const persistOnUnload = () => {
+      const contextManager = getContextManager()
+      contextManager.persistToLongTerm()
+    }
+
+    window.addEventListener('beforeunload', persistOnUnload)
+    return () => {
+      window.removeEventListener('beforeunload', persistOnUnload)
+    }
   }, [])
 
   // Scroll to bottom on new messages

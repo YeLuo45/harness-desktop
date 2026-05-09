@@ -37,7 +37,8 @@
     "typescript": "^5.4.5",
     "vite": "^5.2.10",
     "vite-plugin-electron": "^0.28.6",
-    "vite-plugin-electron-renderer": "^0.14.5"
+    "vite-plugin-electron-renderer": "^0.14.5",
+    "vitest": "^1.0.0"
   },
   "build": {
     "appId": "com.harness.desktop",
