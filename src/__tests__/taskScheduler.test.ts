@@ -5,7 +5,18 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { TaskScheduler, SimpleTaskRegistry, type ScheduledTask, type TaskExecution } from '../services/scheduler'
+import { 
+  TaskScheduler, 
+  SimpleTaskRegistry, 
+  type ScheduledTask, 
+  type TaskExecution,
+  parseCron,
+  getNextRunTime,
+  isValidCron,
+  RetryQueueImpl,
+  getBackoffDelay,
+  getMaxRetries
+} from '../services/scheduler'
 
 // Mock localStorage for node environment
 const localStorageMock = (() => {
@@ -524,5 +535,293 @@ describe('ScheduledTask Validation', () => {
 
     const updated = scheduler.getTask(task.id)
     expect(updated?.runCount).toBe(3)
+  })
+})
+
+// ========== Cron Parser Tests ==========
+
+describe('Cron Parser', () => {
+  describe('parseCron', () => {
+    it('should parse standard 5-field cron expression', () => {
+      const result = parseCron('0 9 * * *')
+      expect(result).not.toBeNull()
+      expect(result?.minute).toBe('0')
+      expect(result?.hour).toBe('9')
+      expect(result?.dayOfMonth).toBe('*')
+      expect(result?.month).toBe('*')
+      expect(result?.dayOfWeek).toBe('*')
+    })
+
+    it('should parse cron with step values', () => {
+      const result = parseCron('*/15 * * * *')
+      expect(result).not.toBeNull()
+      expect(result?.minute).toBe('*/15')
+      expect(result?.hour).toBe('*')
+    })
+
+    it('should parse cron with ranges', () => {
+      const result = parseCron('0 9-17 * * 1-5')
+      expect(result).not.toBeNull()
+      expect(result?.hour).toBe('9-17')
+      expect(result?.dayOfWeek).toBe('1-5')
+    })
+
+    it('should parse 6-field cron with seconds', () => {
+      const result = parseCron('0 0 9 * * *')
+      expect(result).not.toBeNull()
+      expect(result?.second).toBe('0')
+      expect(result?.minute).toBe('0')
+      expect(result?.hour).toBe('9')
+    })
+
+    it('should return null for invalid expressions', () => {
+      expect(parseCron('invalid')).toBeNull()
+      expect(parseCron('* * *')).toBeNull()
+      expect(parseCron('')).toBeNull()
+    })
+  })
+
+  describe('isValidCron', () => {
+    it('should validate correct expressions', () => {
+      expect(isValidCron('0 9 * * *')).toBe(true)
+      expect(isValidCron('*/15 * * * *')).toBe(true)
+      expect(isValidCron('0 0 1 * *')).toBe(true)
+      expect(isValidCron('30 4 1,15 * *')).toBe(true)
+    })
+
+    it('should reject invalid expressions', () => {
+      expect(isValidCron('invalid')).toBe(false)
+      expect(isValidCron('60 9 * * *')).toBe(false)  // invalid minute
+      expect(isValidCron('0 25 * * *')).toBe(false) // invalid hour
+    })
+  })
+
+  describe('getNextRunTime', () => {
+    it('should return next run time for "0 9 * * *" (daily at 9 AM)', () => {
+      // Set a fixed time: 8:00 AM
+      const from = new Date('2024-01-15T08:00:00').getTime()
+      const nextRun = getNextRunTime('0 9 * * *', from)
+      
+      expect(nextRun).not.toBeNull()
+      const nextDate = new Date(nextRun!)
+      expect(nextDate.getHours()).toBe(9)
+      expect(nextDate.getMinutes()).toBe(0)
+      expect(nextDate.getDate()).toBe(15) // Same day if after 9AM it should be next day
+    })
+
+    it('should return next run time for "*/15 * * * *" (every 15 minutes)', () => {
+      // Set a fixed time: 9:00:00
+      const from = new Date('2024-01-15T09:00:00').getTime()
+      const nextRun = getNextRunTime('*/15 * * * *', from)
+      
+      expect(nextRun).not.toBeNull()
+      const nextDate = new Date(nextRun!)
+      expect(nextDate.getMinutes()).toBe(15)
+    })
+
+    it('should return null for invalid expression', () => {
+      const nextRun = getNextRunTime('invalid', Date.now())
+      expect(nextRun).toBeNull()
+    })
+  })
+})
+
+// ========== Retry Queue Tests (Exponential Backoff) ==========
+
+describe('RetryQueue', () => {
+  let retryQueue: RetryQueueImpl
+
+  beforeEach(() => {
+    retryQueue = new RetryQueueImpl()
+  })
+
+  afterEach(() => {
+    retryQueue.clear()
+  })
+
+  describe('getBackoffDelay', () => {
+    it('should return correct delays for exponential backoff', () => {
+      expect(getBackoffDelay(0)).toBe(2000)   // 2s
+      expect(getBackoffDelay(1)).toBe(4000)   // 4s
+      expect(getBackoffDelay(2)).toBe(8000)   // 8s
+      expect(getBackoffDelay(3)).toBe(16000)  // 16s
+      expect(getBackoffDelay(4)).toBe(32000)  // 32s
+    })
+
+    it('should cap delay at max value', () => {
+      expect(getBackoffDelay(5)).toBe(32000)
+      expect(getBackoffDelay(100)).toBe(32000)
+    })
+  })
+
+  describe('getMaxRetries', () => {
+    it('should return 5 max retries', () => {
+      expect(getMaxRetries()).toBe(5)
+    })
+  })
+
+  describe('add', () => {
+    it('should add task to queue with correct delay', () => {
+      retryQueue.add('task-1', 0)
+      const next = retryQueue.getNextRetry()
+      
+      expect(next).not.toBeNull()
+      expect(next?.taskId).toBe('task-1')
+      expect(next?.delayMs).toBeGreaterThanOrEqual(0)
+    })
+
+    it('should not add task beyond max retries', () => {
+      retryQueue.add('task-1', 5) // 6th attempt (0-indexed), should be rejected
+      expect(retryQueue.has('task-1')).toBe(false)
+    })
+  })
+
+  describe('remove', () => {
+    it('should remove task from queue', () => {
+      retryQueue.add('task-1', 0)
+      retryQueue.remove('task-1')
+      
+      expect(retryQueue.has('task-1')).toBe(false)
+    })
+  })
+
+  describe('process', () => {
+    it('should not process items that are not yet due', () => {
+      let retryCount = 0
+      const queue = new RetryQueueImpl(() => { retryCount++ })
+      
+      // Add task with delay (2s)
+      queue.add('task-1', 0)
+      
+      // Task is added with scheduledAt = now + 2000ms, so not due yet
+      expect(queue.has('task-1')).toBe(true)
+      
+      // process() should not call callback for items not yet due
+      queue.process()
+      expect(retryCount).toBe(0)
+    })
+
+    it('should correctly identify items in queue', () => {
+      const queue = new RetryQueueImpl()
+      
+      queue.add('task-1', 0)
+      queue.add('task-2', 1)
+      
+      expect(queue.has('task-1')).toBe(true)
+      expect(queue.has('task-2')).toBe(true)
+      expect(queue.has('task-3')).toBe(false)
+      
+      const all = queue.getAll()
+      expect(all).toHaveLength(2)
+    })
+  })
+})
+
+// ========== Task Dependency Chain Tests ==========
+
+describe('TaskScheduler - Dependencies', () => {
+  let scheduler: TaskScheduler
+  let registry: SimpleTaskRegistry
+
+  beforeEach(async () => {
+    localStorage.clear()
+    registry = new SimpleTaskRegistry()
+    scheduler = new TaskScheduler(registry, { persistTasks: true })
+    await scheduler.initialize()
+  })
+
+  it('should set task dependencies', async () => {
+    const task1 = await scheduler.createTask({
+      name: 'Task 1',
+      type: 'once',
+      scheduledAt: Date.now() + 10000,
+      handler: 'handler1'
+    })
+
+    const task2 = await scheduler.createTask({
+      name: 'Task 2',
+      type: 'once',
+      scheduledAt: Date.now() + 10000,
+      handler: 'handler2'
+    })
+
+    await scheduler.setTaskDependencies(task2.id, [task1.id])
+    
+    const deps = scheduler.getTaskDependencies(task2.id)
+    expect(deps).toBeDefined()
+    expect(deps?.dependsOn).toContain(task1.id)
+  })
+
+  it('should not run task with unmet dependencies', async () => {
+    registry.register('depHandler', async () => 'done')
+    
+    const task1 = await scheduler.createTask({
+      name: 'Task 1',
+      type: 'once',
+      scheduledAt: Date.now() + 10000,
+      handler: 'depHandler'
+    })
+
+    const task2 = await scheduler.createTask({
+      name: 'Task 2',
+      type: 'once',
+      scheduledAt: Date.now() + 10000,
+      handler: 'depHandler'
+    })
+
+    await scheduler.setTaskDependencies(task2.id, [task1.id])
+
+    // Execute task2 without completing task1 should fail
+    await expect(scheduler.executeTask(task2.id)).rejects.toThrow('unmet dependencies')
+  })
+
+  it('should run task when dependencies are met', async () => {
+    let executionOrder: string[] = []
+    
+    registry.register('orderedHandler', async (params: any) => {
+      executionOrder.push(params.taskId)
+      return 'done'
+    })
+    
+    const task1 = await scheduler.createTask({
+      name: 'Task 1',
+      type: 'once',
+      scheduledAt: Date.now() + 10000,
+      handler: 'orderedHandler',
+      params: { taskId: 'task1' }
+    })
+
+    const task2 = await scheduler.createTask({
+      name: 'Task 2',
+      type: 'once',
+      scheduledAt: Date.now() + 10000,
+      handler: 'orderedHandler',
+      params: { taskId: 'task2' }
+    })
+
+    await scheduler.setTaskDependencies(task2.id, [task1.id])
+
+    // Complete task1 first
+    await scheduler.executeTask(task1.id)
+    expect(executionOrder).toContain('task1')
+
+    // Now task2 should run
+    await scheduler.executeTask(task2.id)
+    expect(executionOrder).toContain('task2')
+  })
+
+  it('should throw when setting dependencies for non-existent task', async () => {
+    await expect(scheduler.setTaskDependencies('non-existent', [])).rejects.toThrow()
+  })
+
+  it('should throw when depending on non-existent task', async () => {
+    const task1 = await scheduler.createTask({
+      name: 'Task 1',
+      type: 'once',
+      scheduledAt: Date.now() + 10000,
+      handler: 'handler1'
+    })
+
+    await expect(scheduler.setTaskDependencies(task1.id, ['non-existent'])).rejects.toThrow()
   })
 })

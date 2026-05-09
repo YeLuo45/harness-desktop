@@ -83,3 +83,9 @@ export interface ValidationResult {
   valid: boolean
   error?: string
 }
+
+// Task dependency chain
+export interface TaskDependency {
+  taskId: string
+  dependsOn: string[]  // Must complete before this task runs
+}

@@ -1,7 +1,8 @@
 /**
  * P9: Task Scheduling - TaskScheduler
  * 
- * Core scheduler implementation with localStorage persistence.
+ * Core scheduler implementation with localStorage persistence,
+ * cron parsing, dependency chains, and exponential backoff retry.
  */
 
 import { v4 as uuidv4 } from 'uuid'
@@ -10,11 +11,15 @@ import type {
   TaskExecution, 
   ScheduleConfig, 
   TaskStatus,
-  TaskRegistry 
+  TaskRegistry,
+  TaskDependency
 } from './types'
+import { getNextRunTime as getCronNextRunTime, isValidCron } from './cronParser'
+import { RetryQueueImpl, getBackoffDelay, getMaxRetries } from './taskQueue'
 
 const STORAGE_KEY = 'harness_scheduled_tasks'
 const EXECUTION_KEY = 'harness_task_executions'
+const DEPENDENCY_KEY = 'harness_task_dependencies'
 
 export class TaskScheduler {
   private tasks: Map<string, ScheduledTask> = new Map()
@@ -24,6 +29,9 @@ export class TaskScheduler {
   private registry: TaskRegistry
   private config: ScheduleConfig
   private initialized: boolean = false
+  private retryQueue: RetryQueueImpl
+  private dependencies: Map<string, TaskDependency> = new Map()
+  private completedTasks: Set<string> = new Set()
 
   constructor(registry: TaskRegistry, config: ScheduleConfig = {}) {
     this.registry = registry
@@ -34,6 +42,7 @@ export class TaskScheduler {
       persistExecutions: true,
       ...config
     }
+    this.retryQueue = new RetryQueueImpl((taskId) => this.handleRetry(taskId))
   }
 
   /**
@@ -44,6 +53,7 @@ export class TaskScheduler {
     
     if (this.config.persistTasks) {
       await this.loadTasks()
+      await this.loadDependencies()
     }
     
     // Schedule all enabled tasks
@@ -61,6 +71,14 @@ export class TaskScheduler {
    */
   async createTask(task: Omit<ScheduledTask, 'id' | 'status' | 'createdAt' | 'updatedAt' | 'runCount'>): Promise<ScheduledTask> {
     const now = Date.now()
+    
+    // Validate cron expression if provided
+    if (task.type === 'cron' && task.cronExpression) {
+      if (!isValidCron(task.cronExpression)) {
+        throw new Error(`Invalid cron expression: ${task.cronExpression}`)
+      }
+    }
+    
     const newTask: ScheduledTask = {
       ...task,
       id: uuidv4(),
@@ -111,6 +129,18 @@ export class TaskScheduler {
     const task = this.tasks.get(id)
     if (!task) return null
     
+    // Validate cron expression if being updated
+    if (updates.type === 'cron' && updates.cronExpression) {
+      if (!isValidCron(updates.cronExpression)) {
+        throw new Error(`Invalid cron expression: ${updates.cronExpression}`)
+      }
+    } else if (updates.cronExpression && task.type !== 'cron') {
+      // Cron expression added to non-cron task
+      if (!isValidCron(updates.cronExpression)) {
+        throw new Error(`Invalid cron expression: ${updates.cronExpression}`)
+      }
+    }
+    
     const updatedTask: ScheduledTask = {
       ...task,
       ...updates,
@@ -137,9 +167,12 @@ export class TaskScheduler {
    */
   async deleteTask(id: string): Promise<boolean> {
     this.cancelTask(id)
+    this.retryQueue.remove(id)
+    this.dependencies.delete(id)
     const deleted = this.tasks.delete(id)
     if (deleted) {
       await this.persistTasks()
+      await this.persistDependencies()
     }
     return deleted
   }
@@ -168,6 +201,11 @@ export class TaskScheduler {
     const task = this.tasks.get(id)
     if (!task) {
       throw new Error(`Task ${id} not found`)
+    }
+    
+    // Check dependencies before running
+    if (!this.canRunTask(id)) {
+      throw new Error(`Task ${id} has unmet dependencies`)
     }
     
     return this.runTask(task)
@@ -218,13 +256,72 @@ export class TaskScheduler {
           ? task.lastRunAt + (task.intervalMs || 0)
           : Date.now() + (task.intervalMs || 0)
       case 'cron':
-        // Simplified: for now, return estimated next run
-        return task.lastRunAt 
-          ? task.lastRunAt + 60000  // Assume 1 minute for demo
-          : Date.now() + 60000
+        if (task.cronExpression) {
+          return getCronNextRunTime(task.cronExpression, task.lastRunAt || Date.now())
+        }
+        return undefined
       default:
         return undefined
     }
+  }
+
+  // ========== Dependency Chain Methods ==========
+
+  /**
+   * Set dependencies for a task
+   */
+  async setTaskDependencies(taskId: string, dependsOn: string[]): Promise<void> {
+    if (!this.tasks.has(taskId)) {
+      throw new Error(`Task ${taskId} not found`)
+    }
+    
+    // Validate all dependency tasks exist
+    for (const depId of dependsOn) {
+      if (!this.tasks.has(depId)) {
+        throw new Error(`Dependency task ${depId} not found`)
+      }
+    }
+    
+    const dependency: TaskDependency = {
+      taskId,
+      dependsOn
+    }
+    
+    this.dependencies.set(taskId, dependency)
+    await this.persistDependencies()
+  }
+
+  /**
+   * Get dependencies for a task
+   */
+  getTaskDependencies(taskId: string): TaskDependency | undefined {
+    return this.dependencies.get(taskId)
+  }
+
+  /**
+   * Check if a task can run (all dependencies completed)
+   */
+  canRunTask(taskId: string): boolean {
+    const dependency = this.dependencies.get(taskId)
+    if (!dependency || dependency.dependsOn.length === 0) {
+      return true
+    }
+    
+    return dependency.dependsOn.every(depId => this.completedTasks.has(depId))
+  }
+
+  /**
+   * Mark a task as completed (call after successful execution)
+   */
+  markTaskCompleted(taskId: string): void {
+    this.completedTasks.add(taskId)
+  }
+
+  /**
+   * Clear completed tasks tracking
+   */
+  clearCompletedTasks(): void {
+    this.completedTasks.clear()
   }
 
   // ========== Private Methods ==========
@@ -249,8 +346,16 @@ export class TaskScheduler {
         delay = task.intervalMs || 60000
         break
       case 'cron':
-        // Simplified: use 1 minute intervals
-        delay = 60000
+        if (task.cronExpression) {
+          const nextRun = getCronNextRunTime(task.cronExpression, Date.now())
+          if (nextRun) {
+            delay = nextRun - Date.now()
+          } else {
+            return
+          }
+        } else {
+          return
+        }
         break
       default:
         return
@@ -258,13 +363,30 @@ export class TaskScheduler {
 
     const timer = setTimeout(() => {
       this.runTask(task)
-    }, delay)
+    }, Math.max(0, delay))
 
     this.timers.set(task.id, timer)
     task.nextRunAt = Date.now() + delay
   }
 
   private async runTask(task: ScheduledTask): Promise<TaskExecution> {
+    // Check dependencies
+    if (!this.canRunTask(task.id)) {
+      // Reschedule for later when dependencies might be met
+      const timer = setTimeout(() => {
+        this.scheduleTask(task)
+      }, 5000) // Check again in 5 seconds
+      this.timers.set(task.id, timer)
+      
+      return {
+        id: uuidv4(),
+        taskId: task.id,
+        startedAt: Date.now(),
+        success: false,
+        error: 'Unmet dependencies'
+      }
+    }
+
     const execution: TaskExecution = {
       id: uuidv4(),
       taskId: task.id,
@@ -288,17 +410,20 @@ export class TaskScheduler {
       execution.success = true
       execution.result = result
       task.status = 'completed'
+      this.markTaskCompleted(task.id)
     } catch (error) {
       execution.success = false
       execution.error = error instanceof Error ? error.message : String(error)
       task.status = 'failed'
 
       if (task.retryOnFailure && task.runCount < (task.maxRuns || task.maxRetries || 3)) {
-        // Retry after delay
-        const retryDelay = 5000 * task.runCount  // Exponential backoff
+        // Use exponential backoff retry queue
+        const attempt = task.runCount - 1 // 0-indexed attempt
+        const delay = getBackoffDelay(attempt)
+        
         setTimeout(() => {
-          this.runTask(task)
-        }, retryDelay)
+          this.retryQueue.add(task.id, attempt)
+        }, delay)
       }
     } finally {
       execution.completedAt = Date.now()
@@ -317,10 +442,18 @@ export class TaskScheduler {
         this.scheduleTask(task)
       } else if (task.type === 'once') {
         task.status = 'completed'
+        this.markTaskCompleted(task.id)
       }
     }
 
     return execution
+  }
+
+  private handleRetry(taskId: string): void {
+    const task = this.tasks.get(taskId)
+    if (!task || !task.enabled) return
+    
+    this.runTask(task)
   }
 
   private recordExecution(execution: TaskExecution): void {
@@ -348,6 +481,18 @@ export class TaskScheduler {
     }
   }
 
+  private async loadDependencies(): Promise<void> {
+    try {
+      const stored = localStorage.getItem(DEPENDENCY_KEY)
+      if (stored) {
+        const deps: TaskDependency[] = JSON.parse(stored)
+        deps.forEach(dep => this.dependencies.set(dep.taskId, dep))
+      }
+    } catch (error) {
+      console.error('Failed to load dependencies from storage:', error)
+    }
+  }
+
   private async persistTasks(): Promise<void> {
     if (!this.config.persistTasks) return
     
@@ -356,6 +501,17 @@ export class TaskScheduler {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks))
     } catch (error) {
       console.error('Failed to persist tasks:', error)
+    }
+  }
+
+  private async persistDependencies(): Promise<void> {
+    if (!this.config.persistTasks) return
+    
+    try {
+      const deps = Array.from(this.dependencies.values())
+      localStorage.setItem(DEPENDENCY_KEY, JSON.stringify(deps))
+    } catch (error) {
+      console.error('Failed to persist dependencies:', error)
     }
   }
 

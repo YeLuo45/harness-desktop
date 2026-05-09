@@ -13,7 +13,11 @@ export {
   type ScheduleType,
   type CronFields,
   type CronExpression,
-  type ValidationResult
+  type ValidationResult,
+  type TaskDependency
 } from './types'
 
 export { TaskScheduler, SimpleTaskRegistry } from './taskScheduler'
+
+export { parseCron, getNextRunTime, isValidCron } from './cronParser'
+export { RetryQueueImpl, getBackoffDelay, getMaxRetries } from './taskQueue'
