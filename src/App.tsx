@@ -458,9 +458,9 @@ function App() {
     }
 
     // Check if context needs compression
-    if (contextManager.needsCompression()) {
-      const { compressedCount, remainingCount } = contextManager.compress()
-      console.log(`Context compressed: ${compressedCount} items removed, ${remainingCount} remaining`)
+    const compressionResult = contextManager.compress()
+    if (compressionResult) {
+      console.log(`Context compressed (${compressionResult.level}): ${compressionResult.originalCount} → ${compressionResult.compressedCount} pointers, ${Math.round(compressionResult.savedRatio * 100)}% tokens saved`)
     }
 
     setLoading(false)

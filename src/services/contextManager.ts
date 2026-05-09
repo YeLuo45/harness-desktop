@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import type { MemoryPointer, ChatMessage, ToolResult } from '../types'
 import { getLongTermMemoryService } from './longTermMemory'
+import { getCompressionOrchestrator, type CompressionResult } from './compression'
 
 const MAX_CONTEXT_TOKENS = 128000
 const COMPRESSION_THRESHOLD = 0.8 // 80% of max
@@ -106,35 +107,45 @@ export class ContextManager {
     return messages
   }
 
-  // Check if context needs compression
+  // Check if context needs compression (delegates to orchestrator)
   needsCompression(): boolean {
-    return this.tokenCount >= MAX_CONTEXT_TOKENS * COMPRESSION_THRESHOLD
+    const orchestrator = getCompressionOrchestrator()
+    return orchestrator.needsCompression(this.tokenCount)
   }
 
-  // Compress context by keeping important pointers and summarizing others
-  compress(): { compressedCount: number; remainingCount: number } {
+  /**
+   * Compress context using intelligent compression strategies
+   * @returns CompressionResult with details about the compression, or null if not needed
+   */
+  compress(): CompressionResult | null {
+    const orchestrator = getCompressionOrchestrator()
+
+    // Check if compression is actually needed
+    if (!this.needsCompression()) {
+      return null
+    }
+
+    // Execute compression with appropriate strategy
+    const result = orchestrator.compress(this.memory, this.tokenCount)
+
+    if (result) {
+      // Update memory with compressed pointers
+      this.memory = result.compressedPointers
+      this.updateTokenCount()
+
+      console.log(`[ContextManager] Compression ${result.level}: ${result.originalCount} → ${result.compressedCount} pointers (${Math.round(result.savedRatio * 100)}% tokens saved)`)
+    }
+
+    return result
+  }
+
+  /**
+   * Legacy compress method for backwards compatibility
+   * @deprecated Use compress() instead
+   */
+  compressLegacy(): { compressedCount: number; remainingCount: number } {
     const beforeCount = this.memory.length
-
-    // Strategy: Keep the most recent pointers and pointers with associations
-    // Compress older, standalone pointers
-    const recent = this.memory.filter((p) => {
-      // Keep if in last 50% of memory
-      const index = this.memory.indexOf(p)
-      return index > this.memory.length * 0.5
-    })
-
-    const withAssociations = this.memory.filter(
-      (p) => p.associations.length > 0 && !recent.includes(p)
-    )
-
-    // Keep system prompts and tool statuses
-    const important = this.memory.filter(
-      (p) => p.type === 'tool_call' && p.summary.includes('tool_status')
-    )
-
-    this.memory = [...recent, ...withAssociations, ...important]
-    this.updateTokenCount()
-
+    const result = this.compress()
     const afterCount = this.memory.length
 
     return {
