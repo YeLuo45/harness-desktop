@@ -7,9 +7,9 @@
  * - 多维度查询（session/type/tag/time/keyword）
  * - 跨会话轨迹追溯
  * - 全文搜索
+ * - IndexedDB 持久化
  */
 
-import { v4 as uuidv4 } from 'uuid'
 import type {
   TrajectoryRecord,
   TrajectoryQuery,
@@ -19,16 +19,75 @@ import type {
   TrajectoryType
 } from './types'
 import { createTrajectoryRecord } from './types'
+import { createIndexedDBStorage, type IndexedDBStorage } from '../storage/indexedDBStorage'
 
-// In-memory storage for trajectory records
-// IndexedDB integration would be added for persistence
+// Record stored in IndexedDB
+interface StoredTrajectoryRecord extends TrajectoryRecord {
+  id: string
+}
+
+// TrajectoryStore with IndexedDB persistence and in-memory L1 cache
 class TrajectoryStore {
-  private records: Map<string, TrajectoryRecord> = new Map()
+  private db: IndexedDBStorage
+  private records: Map<string, TrajectoryRecord> = new Map()  // L1 cache
   private sessionIndex: Map<string, Set<string>> = new Map()
   private typeIndex: Map<TrajectoryType, Set<string>> = new Map()
   private tagIndex: Map<string, Set<string>> = new Map()
+  private initialized: boolean = false
+
+  constructor() {
+    this.db = createIndexedDBStorage('harness-trajectory', 'trajectory')
+  }
+
+  /**
+   * Initialize store by loading existing records from IndexedDB
+   */
+  async init(): Promise<void> {
+    if (this.initialized) return
+    
+    try {
+      const allRecords = await this.db.getAll<StoredTrajectoryRecord>('traj_')
+      for (const record of allRecords) {
+        // Restore to L1 cache
+        this.records.set(record.id, record)
+        
+        // Rebuild session index
+        if (!this.sessionIndex.has(record.sessionId)) {
+          this.sessionIndex.set(record.sessionId, new Set())
+        }
+        this.sessionIndex.get(record.sessionId)!.add(record.id)
+        
+        // Rebuild type index
+        if (!this.typeIndex.has(record.type)) {
+          this.typeIndex.set(record.type, new Set())
+        }
+        this.typeIndex.get(record.type)!.add(record.id)
+        
+        // Rebuild tag index
+        for (const tag of record.tags) {
+          if (!this.tagIndex.has(tag)) {
+            this.tagIndex.set(tag, new Set())
+          }
+          this.tagIndex.get(tag)!.add(record.id)
+        }
+      }
+      this.initialized = true
+    } catch (error) {
+      console.error('[TrajectoryStore] Failed to initialize from IndexedDB:', error)
+      this.initialized = true
+    }
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.init()
+    }
+  }
 
   async set(record: TrajectoryRecord): Promise<void> {
+    await this.ensureInitialized()
+    
+    // Update L1 cache
     this.records.set(record.id, record)
     
     // Update session index
@@ -50,17 +109,23 @@ class TrajectoryStore {
       }
       this.tagIndex.get(tag)!.add(record.id)
     }
+    
+    // Persist to IndexedDB
+    await this.db.set(record.id, record)
   }
 
   async get(id: string): Promise<TrajectoryRecord | null> {
+    await this.ensureInitialized()
     return this.records.get(id) || null
   }
 
   async delete(id: string): Promise<boolean> {
+    await this.ensureInitialized()
+    
     const record = this.records.get(id)
     if (!record) return false
     
-    // Remove from all indices
+    // Remove from all indices and cache
     this.records.delete(id)
     
     const sessionIds = this.sessionIndex.get(record.sessionId)
@@ -89,10 +154,15 @@ class TrajectoryStore {
       }
     }
     
+    // Remove from IndexedDB
+    await this.db.delete(id)
+    
     return true
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    await this.ensureInitialized()
+    
     const ids = this.sessionIndex.get(sessionId)
     if (ids) {
       for (const id of ids) {
@@ -102,6 +172,8 @@ class TrajectoryStore {
   }
 
   async getSessionRecords(sessionId: string): Promise<TrajectoryRecord[]> {
+    await this.ensureInitialized()
+    
     const ids = this.sessionIndex.get(sessionId)
     if (!ids) return []
     
@@ -115,10 +187,13 @@ class TrajectoryStore {
   }
 
   async getAllIds(): Promise<string[]> {
+    await this.ensureInitialized()
     return Array.from(this.records.keys())
   }
 
   async queryIds(query: TrajectoryQuery): Promise<string[]> {
+    await this.ensureInitialized()
+    
     let candidateIds: Set<string> | null = null
     
     // Session filter
@@ -187,7 +262,7 @@ class TrajectoryStore {
         }
       }
       
-      // Keyword filter
+      // Keyword filter (substring match on content and summary)
       if (query.keyword) {
         const kw = query.keyword.toLowerCase()
         if (!record.content.toLowerCase().includes(kw) && 
@@ -281,7 +356,7 @@ export class TrajectoryService {
   }
 
   /**
-   * Search trajectory records by keyword
+   * Search trajectory records by keyword (substring match in content/summary)
    */
   async search(keyword: string, limit: number = 10): Promise<TrajectoryRecord[]> {
     const result = await this.query({ keyword, limit })

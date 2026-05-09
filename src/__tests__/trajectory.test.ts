@@ -2,6 +2,49 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type { TrajectoryRecord, TrajectoryQuery, TrajectoryResult, TrajectoryStats } from '../services/trajectory/types'
 import { TrajectoryService } from '../services/trajectory/trajectoryService'
 
+// Mock global indexedDB for tests
+const mockDatabases: Map<string, Map<string, any>> = new Map()
+
+const mockIndexDB = {
+  open: vi.fn((name: string, version: number) => {
+    return {
+      onerror: null,
+      onsuccess: null,
+      onupgradeneeded: null,
+      result: {
+        objectStoreNames: { contains: () => false },
+        createObjectStore: vi.fn((storeName: string) => ({
+          put: vi.fn(),
+          get: vi.fn(),
+          delete: vi.fn(),
+          clear: vi.fn(),
+          getAll: vi.fn()
+        }))
+      }
+    }
+  })
+}
+
+if (typeof window !== 'undefined') {
+  // @ts-ignore
+  window.indexedDB = mockIndexDB as unknown as IDBFactory
+}
+
+// Mock IndexedDBStorage to avoid real IndexedDB issues in tests
+vi.mock('../services/storage/indexedDBStorage', () => {
+  const storage = new Map<string, any>()
+  
+  return {
+    createIndexedDBStorage: vi.fn(() => ({
+      get: vi.fn(async (key: string) => storage.get(key) ?? null),
+      set: vi.fn(async (key: string, value: any) => storage.set(key, value)),
+      delete: vi.fn(async (key: string) => storage.delete(key)),
+      clear: vi.fn(async () => storage.clear()),
+      getAll: vi.fn(async () => Array.from(storage.values()))
+    }))
+  }
+})
+
 describe('TrajectoryService', () => {
   let service: TrajectoryService
   let recordedIds: string[] = []
