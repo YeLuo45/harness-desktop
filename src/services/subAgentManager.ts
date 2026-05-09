@@ -198,9 +198,9 @@ export class SubAgentManager {
     return agent.tasks.filter(task => {
       if (task.status !== 'idle') return false
 
-      // Check all dependencies are completed
+      // Check all dependencies are completed (may span across agents)
       for (const depId of task.dependencies) {
-        const depTask = agent.tasks.find(t => t.id === depId)
+        const depTask = this.findTaskById(depId)
         if (!depTask || depTask.status !== 'completed') {
           return false
         }
@@ -208,6 +208,17 @@ export class SubAgentManager {
 
       return true
     })
+  }
+
+  /**
+   * Find a task by ID across all agents
+   */
+  private findTaskById(taskId: string): SubTask | undefined {
+    for (const agent of this.agents.values()) {
+      const task = agent.tasks.find(t => t.id === taskId)
+      if (task) return task
+    }
+    return undefined
   }
 
   /**
@@ -268,12 +279,16 @@ export class SubAgentManager {
       }
     }
 
-    task.status = toolResults.every(r => r.success) ? 'completed' : 'failed'
+    const taskFailed = !toolResults.every(r => r.success)
+    task.status = taskFailed ? 'failed' : 'completed'
     task.completedAt = Date.now()
+    
+    const firstError = toolResults.find(r => !r.success)?.error
     task.result = {
-      success: task.status === 'completed',
+      success: !taskFailed,
       toolResults,
-      output: outputParts.join('\n')
+      output: outputParts.join('\n'),
+      error: taskFailed ? (firstError || 'Task failed') : undefined
     }
 
     // Callback

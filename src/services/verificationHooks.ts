@@ -63,18 +63,14 @@ export class VerificationHooks {
               return { passed: cfg.level !== 'strict', message: 'File is empty', severity: 'warning' as const }
             }
             return pass()
-          },
-          (r) => {
-            const data = r.result as { size?: number }
-            if (data.size && data.size > 10 * 1024 * 1024) {
-              return fail('File too large (' + (data.size / 1024 / 1024).toFixed(2) + ' MB). Use selective reading.', 'error')
-            }
-            return pass()
           }
         ],
         warnings: [
           (r) => {
-            const data = r.result as { content?: string }
+            const data = r.result as { content?: string; size?: number }
+            if (data.size && data.size > 10 * 1024 * 1024) {
+              return fail('File too large (' + (data.size / 1024 / 1024).toFixed(2) + ' MB). Use selective reading.', 'warning')
+            }
             if (data.content && /[\x00-\x08\x0E-\x1F]/.test(data.content.slice(0, 1000))) {
               return fail('File may contain binary data', 'warning')
             }
