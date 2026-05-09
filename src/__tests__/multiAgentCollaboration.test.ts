@@ -186,8 +186,15 @@ describe('Task Decomposition Logic', () => {
   })
 
   describe('Task dependencies', () => {
-    it('should respect task dependencies when getting ready tasks', () => {
+    it('should respect task dependencies when getting ready tasks', async () => {
       const agent = manager.createAgent('TestAgent')
+      manager.setToolExecutor(async (toolName, args) => ({
+        toolName,
+        arguments: args,
+        result: { success: true },
+        success: true,
+        timestamp: Date.now()
+      }))
 
       const task1 = manager.addTask(agent.id, 'Task 1', [{ name: 'file_read', arguments: {} }])
       const task2 = manager.addTask(agent.id, 'Task 2', [{ name: 'file_write', arguments: {} }], [task1!.id])
@@ -199,7 +206,7 @@ describe('Task Decomposition Logic', () => {
       expect(ready[0].id).toBe(task1!.id)
 
       // Complete task1
-      manager.executeTask(agent.id, task1!.id)
+      await manager.executeTask(agent.id, task1!.id)
 
       // Now task2 should be ready
       ready = manager.getReadyTasks(agent.id)
@@ -218,8 +225,15 @@ describe('Task Decomposition Logic', () => {
       expect(ready).toHaveLength(3)
     })
 
-    it('should handle complex dependency graphs', () => {
+    it('should handle complex dependency graphs', async () => {
       const agent = manager.createAgent('TestAgent')
+      manager.setToolExecutor(async (toolName, args) => ({
+        toolName,
+        arguments: args,
+        result: { success: true },
+        success: true,
+        timestamp: Date.now()
+      }))
 
       // Create dependency structure:
       //   task1
@@ -238,7 +252,7 @@ describe('Task Decomposition Logic', () => {
       expect(ready[0].id).toBe(task1!.id)
 
       // After completing task1, task2 and task3 become ready (parallel)
-      manager.executeTask(agent.id, task1!.id)
+      await manager.executeTask(agent.id, task1!.id)
       ready = manager.getReadyTasks(agent.id)
       expect(ready).toHaveLength(2)
       expect(ready.map(t => t.id)).toContain(task2!.id)
@@ -909,8 +923,8 @@ describe('Multi-Agent Collaboration Integration', () => {
     // Complete analyzer
     await manager.executeTask(analyzer.id, analyzeTask!.id)
 
-    // Now generator under analyzer should be ready
-    ready = manager.getReadyTasks(analyzer.id)
+    // Now generator should be ready
+    ready = manager.getReadyTasks(generator.id)
     expect(ready).toHaveLength(1)
   })
 
