@@ -79,6 +79,28 @@ export interface RenderOptions {
   defaults?: boolean  // Use default values for missing
 }
 
+// Skill Version Management
+export interface SkillVersion {
+  version: string
+  createdAt: number
+  template: SkillTemplate
+}
+
+// Skill Chain for sequential execution
+export interface SkillChain {
+  id: string
+  name: string
+  skillIds: string[]
+  onError: 'stop' | 'continue'
+}
+
+// Result of chain execution
+export interface ChainResult {
+  chainId: string
+  results: Array<{ skillId: string; success: boolean; result?: unknown; error?: string }>
+  totalDuration: number
+}
+
 // Built-in skill templates
 export const BUILT_IN_SKILLS: Omit<SkillTemplate, 'id' | 'useCount' | 'lastUsedAt' | 'createdAt' | 'updatedAt'>[] = [
   {

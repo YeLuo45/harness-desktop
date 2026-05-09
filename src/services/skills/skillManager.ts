@@ -12,6 +12,7 @@ import type {
   SkillExecution,
   RenderOptions,
   SkillCategory,
+  SkillVersion,
   BUILT_IN_SKILLS
 } from './types'
 import { BUILT_IN_SKILLS as builtInSkillTemplates } from './types'
@@ -21,6 +22,8 @@ const EXECUTION_KEY = 'harness_skill_executions'
 
 export class SkillManager implements SkillRegistry {
   private skills: Map<string, SkillTemplate> = new Map()
+  private skillVersions: Map<string, SkillVersion[]> = new Map()
+  private currentVersion: Map<string, string> = new Map()  // skillId -> version
   private initialized: boolean = false
 
   constructor() {
@@ -43,6 +46,9 @@ export class SkillManager implements SkillRegistry {
     } catch (error) {
       console.error('Failed to load skills from storage:', error)
     }
+
+    // Load skill versions
+    this.loadVersions()
 
     this.initialized = true
   }
@@ -296,6 +302,117 @@ export class SkillManager implements SkillRegistry {
     }
 
     return categories
+  }
+
+  // ========== Version Management ==========
+
+  /**
+   * Get all versions for a skill
+   */
+  getVersions(skillId: string): SkillVersion[] {
+    return this.skillVersions.get(skillId) || []
+  }
+
+  /**
+   * Add a new version for a skill
+   */
+  addVersion(skillId: string, version: string, template: SkillTemplate): void {
+    const skill = this.skills.get(skillId)
+    if (!skill) {
+      throw new Error(`Skill not found: ${skillId}`)
+    }
+
+    const versions = this.skillVersions.get(skillId) || []
+    
+    // Check if version already exists
+    const existingIndex = versions.findIndex(v => v.version === version)
+    if (existingIndex >= 0) {
+      // Update existing version
+      versions[existingIndex] = {
+        version,
+        createdAt: Date.now(),
+        template
+      }
+    } else {
+      // Add new version
+      versions.push({
+        version,
+        createdAt: Date.now(),
+        template
+      })
+    }
+
+    this.skillVersions.set(skillId, versions)
+    this.currentVersion.set(skillId, version)
+    
+    // Persist versions
+    this.persistVersions()
+  }
+
+  /**
+   * Use a specific version of a skill
+   */
+  useVersion(skillId: string, version: string): void {
+    const versions = this.skillVersions.get(skillId)
+    if (!versions) {
+      throw new Error(`No versions found for skill: ${skillId}`)
+    }
+
+    const found = versions.find(v => v.version === version)
+    if (!found) {
+      throw new Error(`Version ${version} not found for skill: ${skillId}`)
+    }
+
+    this.currentVersion.set(skillId, version)
+    
+    // Update the current skill with the version's template
+    const skill = this.skills.get(skillId)
+    if (skill) {
+      skill.template = found.template.template
+      skill.version = found.version
+      skill.updatedAt = Date.now()
+      this.persistSkills()
+    }
+  }
+
+  /**
+   * Persist versions to localStorage
+   */
+  private persistVersions(): void {
+    try {
+      const versionsData: Array<{ skillId: string; versions: SkillVersion[]; current: string }> = []
+      
+      for (const [skillId, versions] of this.skillVersions.entries()) {
+        versionsData.push({
+          skillId,
+          versions,
+          current: this.currentVersion.get(skillId) || ''
+        })
+      }
+
+      localStorage.setItem('harness_skill_versions', JSON.stringify(versionsData))
+    } catch (error) {
+      console.error('Failed to persist skill versions:', error)
+    }
+  }
+
+  /**
+   * Load versions from localStorage
+   */
+  private loadVersions(): void {
+    try {
+      const stored = localStorage.getItem('harness_skill_versions')
+      if (stored) {
+        const versionsData = JSON.parse(stored) as Array<{ skillId: string; versions: SkillVersion[]; current: string }>
+        
+        for (const data of versionsData) {
+          this.skillVersions.set(data.skillId, data.versions)
+          this.currentVersion.set(data.skillId, data.current)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load skill versions:', error)
+    }
   }
 
   // ========== Private Methods ==========

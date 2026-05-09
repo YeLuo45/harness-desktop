@@ -546,3 +546,334 @@ describe('Built-in Skills', () => {
     expect(skill?.name).toBe('Refactoring Plan')
   })
 })
+
+// ========== Skill Market Tests ==========
+
+import { createSkillMarket } from '../services/skills/skillMarket'
+
+describe('SkillMarket', () => {
+  let manager: SkillManager
+  let market: ReturnType<typeof createSkillMarket>
+
+  beforeEach(async () => {
+    localStorage.clear()
+    manager = new SkillManager()
+    await manager.initialize()
+    market = createSkillMarket(
+      (id) => manager.get(id),
+      () => manager.list()
+    )
+  })
+
+  describe('exportSkill', () => {
+    it('should export a single skill as JSON', () => {
+      const json = market.exportSkill('builtin_code_review')
+      
+      expect(json).toBeTruthy()
+      const parsed = JSON.parse(json)
+      expect(parsed.version).toBe('1.0.0')
+      expect(parsed.skills).toHaveLength(1)
+      expect(parsed.skills[0].name).toBe('Code Review')
+    })
+
+    it('should throw for non-existent skill', () => {
+      expect(() => market.exportSkill('non-existent')).toThrow('Skill not found')
+    })
+  })
+
+  describe('exportAllSkills', () => {
+    it('should export all skills as JSON', () => {
+      const json = market.exportAllSkills()
+      
+      expect(json).toBeTruthy()
+      const parsed = JSON.parse(json)
+      expect(parsed.version).toBe('1.0.0')
+      expect(Array.isArray(parsed.skills)).toBe(true)
+      expect(parsed.skills.length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('importSkill', () => {
+    it('should import a skill from JSON', async () => {
+      const skill: SkillTemplate = {
+        id: 'export-test',
+        name: 'Export Test',
+        description: 'Testing export/import',
+        category: 'coding',
+        template: 'Hello {{name}}',
+        variables: [{ name: 'name', type: 'string', description: 'Name', required: true }],
+        version: '1.0.0',
+        tags: ['test'],
+        useCount: 0,
+        enabled: true,
+        isBuiltIn: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }
+      manager.register(skill)
+
+      const json = market.exportSkill('export-test')
+      const imported = market.importSkill(json)
+
+      expect(imported.name).toBe('Export Test')
+      expect(imported.id).not.toBe('export-test')  // Should get new ID
+      expect(imported.id).toContain('imported_')
+    })
+
+    it('should throw for invalid JSON', () => {
+      expect(() => market.importSkill('not valid json')).toThrow('Invalid JSON format')
+    })
+
+    it('should throw for invalid skill schema', () => {
+      const invalid = JSON.stringify({ version: '1.0.0', skills: [{ invalid: 'schema' }] })
+      expect(() => market.importSkill(invalid)).toThrow('No valid skill found')
+    })
+  })
+
+  describe('importSkills', () => {
+    it('should import multiple skills', () => {
+      const json = market.exportAllSkills()
+      const imported = market.importSkills(json)
+
+      expect(Array.isArray(imported)).toBe(true)
+      // Each imported skill should have a new ID
+      for (const skill of imported) {
+        expect(skill.id).toContain('imported_')
+      }
+    })
+  })
+
+  describe('validateSkillSchema', () => {
+    it('should validate correct skill schema', () => {
+      const validSkill = {
+        id: 'test',
+        name: 'Test',
+        description: 'Test desc',
+        category: 'coding',
+        template: 'Hello',
+        variables: [],
+        version: '1.0.0',
+        tags: []
+      }
+      expect(market.validateSkillSchema(validSkill)).toBe(true)
+    })
+
+    it('should reject invalid schema', () => {
+      expect(market.validateSkillSchema(null)).toBe(false)
+      expect(market.validateSkillSchema({})).toBe(false)
+      expect(market.validateSkillSchema({ id: 'test' })).toBe(false)
+    })
+  })
+})
+
+// ========== Skill Chain Tests ==========
+
+import { createSkillChainExecutor, createSkillChain } from '../services/skills/skillChain'
+
+describe('SkillChainExecutor', () => {
+  let manager: SkillManager
+  let executor: ReturnType<typeof createSkillChainExecutor>
+
+  beforeEach(async () => {
+    localStorage.clear()
+    manager = new SkillManager()
+    await manager.initialize()
+    executor = createSkillChainExecutor(
+      (id) => manager.get(id),
+      (skillId, vars) => manager.render(skillId, vars)
+    )
+  })
+
+  describe('execute', () => {
+    it('should execute skills in sequence', async () => {
+      const chain = createSkillChain(
+        'test-chain',
+        'Test Chain',
+        ['builtin_code_review', 'builtin_explain_code'],
+        'continue'
+      )
+
+      const result = await executor.execute(chain, { code: 'function test() {}' })
+
+      expect(result.chainId).toBe('test-chain')
+      expect(result.results).toHaveLength(2)
+      expect(result.results[0].skillId).toBe('builtin_code_review')
+      expect(result.results[0].success).toBe(true)
+      expect(result.results[1].skillId).toBe('builtin_explain_code')
+      expect(result.results[1].success).toBe(true)
+      expect(result.totalDuration).toBeGreaterThanOrEqual(0)
+    })
+
+    it('should stop on error when onError is stop', async () => {
+      const chain = createSkillChain(
+        'stop-chain',
+        'Stop Chain',
+        ['builtin_code_review', 'non-existent'],
+        'stop'
+      )
+
+      const result = await executor.execute(chain, { code: 'test' })
+
+      expect(result.results).toHaveLength(1)
+      expect(result.results[0].skillId).toBe('builtin_code_review')
+      expect(result.results[0].success).toBe(true)
+    })
+
+    it('should continue on error when onError is continue', async () => {
+      const chain = createSkillChain(
+        'continue-chain',
+        'Continue Chain',
+        ['builtin_code_review', 'non-existent', 'builtin_explain_code'],
+        'continue'
+      )
+
+      const result = await executor.execute(chain, { code: 'test' })
+
+      expect(result.results).toHaveLength(3)
+      expect(result.results[0].success).toBe(true)
+      expect(result.results[1].success).toBe(false)
+      expect(result.results[1].error).toContain('Skill not found')
+      expect(result.results[2].success).toBe(true)
+    })
+  })
+
+  describe('executeSkill', () => {
+    it('should execute a single skill', async () => {
+      const result = await executor.executeSkill('builtin_code_review', { code: 'let x = 1' })
+
+      expect(result).toBeDefined()
+      expect((result as any).skillId).toBe('builtin_code_review')
+      expect((result as any).rendered).toContain('let x = 1')
+    })
+
+    it('should throw for non-existent skill', async () => {
+      await expect(executor.executeSkill('non-existent', {})).rejects.toThrow('Skill not found')
+    })
+  })
+})
+
+// ========== Version Management Tests ==========
+
+describe('SkillManager Version Management', () => {
+  let manager: SkillManager
+
+  beforeEach(async () => {
+    localStorage.clear()
+    manager = new SkillManager()
+    
+    // Register a test skill
+    manager.register({
+      id: 'version-test',
+      name: 'Version Test',
+      description: 'Testing versions',
+      category: 'coding',
+      template: 'Original template',
+      variables: [],
+      version: '1.0.0',
+      tags: ['test'],
+      useCount: 0,
+      enabled: true,
+      isBuiltIn: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    })
+  })
+
+  describe('getVersions', () => {
+    it('should return empty array for skill with no versions', () => {
+      const versions = manager.getVersions('version-test')
+      expect(versions).toEqual([])
+    })
+
+    it('should return versions after adding them', () => {
+      manager.addVersion('version-test', '1.0.0', manager.get('version-test')!)
+      manager.addVersion('version-test', '2.0.0', {
+        ...manager.get('version-test')!,
+        template: 'Updated template',
+        version: '2.0.0'
+      })
+
+      const versions = manager.getVersions('version-test')
+      expect(versions).toHaveLength(2)
+      expect(versions[0].version).toBe('1.0.0')
+      expect(versions[1].version).toBe('2.0.0')
+    })
+  })
+
+  describe('addVersion', () => {
+    it('should add a new version', () => {
+      const skill = manager.get('version-test')!
+      manager.addVersion('version-test', '1.0.0', skill)
+
+      const versions = manager.getVersions('version-test')
+      expect(versions).toHaveLength(1)
+      expect(versions[0].version).toBe('1.0.0')
+    })
+
+    it('should update existing version', () => {
+      const skill = manager.get('version-test')!
+      manager.addVersion('version-test', '1.0.0', skill)
+      
+      const updatedSkill = { ...skill, template: 'Updated' }
+      manager.addVersion('version-test', '1.0.0', updatedSkill)
+
+      const versions = manager.getVersions('version-test')
+      expect(versions).toHaveLength(1)
+      expect(versions[0].template.template).toBe('Updated')
+    })
+
+    it('should throw for non-existent skill', () => {
+      expect(() => manager.addVersion('non-existent', '1.0.0', {} as SkillTemplate))
+        .toThrow('Skill not found')
+    })
+  })
+
+  describe('useVersion', () => {
+    it('should switch to a different version', () => {
+      const skill = manager.get('version-test')!
+      
+      manager.addVersion('version-test', '1.0.0', skill)
+      manager.addVersion('version-test', '2.0.0', {
+        ...skill,
+        template: 'Version 2 template',
+        version: '2.0.0'
+      })
+
+      manager.useVersion('version-test', '2.0.0')
+
+      const currentSkill = manager.get('version-test')
+      expect(currentSkill?.template).toBe('Version 2 template')
+      expect(currentSkill?.version).toBe('2.0.0')
+    })
+
+    it('should throw for non-existent version', () => {
+      manager.addVersion('version-test', '1.0.0', manager.get('version-test')!)
+      
+      expect(() => manager.useVersion('version-test', '99.0.0'))
+        .toThrow('Version 99.0.0 not found')
+    })
+  })
+
+  describe('version persistence', () => {
+    it('should persist versions to localStorage', () => {
+      const skill = manager.get('version-test')!
+      manager.addVersion('version-test', '1.0.0', skill)
+
+      const stored = localStorage.getItem('harness_skill_versions')
+      expect(stored).toBeTruthy()
+    })
+
+    it('should load versions on initialize', async () => {
+      const skill = manager.get('version-test')!
+      manager.addVersion('version-test', '1.0.0', skill)
+
+      // Create new manager and initialize
+      const newManager = new SkillManager()
+      await newManager.initialize()
+
+      const versions = newManager.getVersions('version-test')
+      expect(versions).toHaveLength(1)
+      expect(versions[0].version).toBe('1.0.0')
+    })
+  })
+})
