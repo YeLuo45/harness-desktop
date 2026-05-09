@@ -17,3 +17,15 @@ export {
 } from './types'
 
 export { CollaborationManager, collaborationManager } from './collaborationManager'
+
+// Task Decomposer
+export { TaskDecomposer, taskDecomposer, type DecomposedTask } from './taskDecomposer'
+export type { SubTaskItem } from './taskDecomposer'
+
+// Orchestrator
+export { Orchestrator, orchestrator, type ExecutionPlan, type ExecutionStep } from './orchestrator'
+export type { PlanMetadata } from './orchestrator'
+
+// Result Aggregator
+export { ResultAggregator, resultAggregator, type AggregationConfig } from './resultAggregator'
+export type { ConflictResolution } from './resultAggregator'

@@ -19,6 +19,9 @@ import type {
   BUILT_IN_AGENTS
 } from './types'
 import { BUILT_IN_AGENTS, CollaborationStatus } from './types'
+import { TaskDecomposer, taskDecomposer, type DecomposedTask } from './taskDecomposer'
+import { Orchestrator, orchestrator, type ExecutionPlan, type ExecutionStep } from './orchestrator'
+import { ResultAggregator, resultAggregator, type AggregationConfig } from './resultAggregator'
 
 const STORAGE_KEY = 'harness_collaboration_sessions'
 
@@ -28,9 +31,16 @@ export class CollaborationManager {
   private eventHandlers: Set<CollaborationEventHandler> = new Set()
   private agentRegistry: Map<string, AgentConfig> = new Map()
   private initialized: boolean = false
+  private taskDecomposer: TaskDecomposer
+  private orchestrator: Orchestrator
+  private aggregator: ResultAggregator
+  private aggregationStrategy: AggregationConfig['strategy'] = 'sequential'
 
   constructor() {
     this.registerBuiltInAgents()
+    this.taskDecomposer = new TaskDecomposer()
+    this.orchestrator = new Orchestrator()
+    this.aggregator = new ResultAggregator()
   }
 
   /**
@@ -406,6 +416,178 @@ export class CollaborationManager {
    */
   getAgentsByRole(role: AgentRole): AgentConfig[] {
     return Array.from(this.agentRegistry.values()).filter(a => a.role === role)
+  }
+
+  // ========== Task Decomposition & Orchestration Methods ==========
+
+  /**
+   * Decompose a complex task and create an orchestration plan
+   */
+  async decomposeAndPlan(task: string): Promise<OrchestrationPlan> {
+    // Decompose the task
+    const decomposed = this.taskDecomposer.decompose(task)
+    
+    // Create or use current session
+    let session = this.currentSession
+    if (!session) {
+      session = await this.createSession('Decomposed Task Session', `Auto-generated for: ${task.substring(0, 50)}...`)
+    }
+
+    // Convert subtasks to collaboration tasks
+    const collaborationTasks: CollaborationTask[] = decomposed.subtasks.map(subtask => ({
+      id: subtask.id,
+      description: subtask.description,
+      status: 'pending' as const,
+      dependencies: subtask.dependencies,
+      createdAt: Date.now()
+    }))
+
+    // Create execution plan
+    const executionPlan = this.orchestrator.createExecutionPlan({
+      ...session,
+      tasks: collaborationTasks
+    })
+
+    // Build OrchestrationPlan from ExecutionPlan
+    return {
+      sessionId: session.id,
+      tasks: collaborationTasks,
+      executionOrder: executionPlan.parallelGroups || [],
+      estimatedDuration: decomposed.estimatedDuration,
+      createdAt: Date.now()
+    }
+  }
+
+  /**
+   * Execute a session with intelligent orchestration
+   */
+  async executeWithOrchestration(plan: ExecutionPlan): Promise<AggregationResult> {
+    const session = this.sessions.get(plan.sessionId)
+    if (!session) {
+      throw new Error(`Session not found: ${plan.sessionId}`)
+    }
+
+    session.status = 'working'
+    this.emitEvent({ type: 'session_started', sessionId: session.id, timestamp: Date.now() })
+
+    const completed = new Set<string>()
+
+    try {
+      // Execute steps according to plan
+      for (const step of plan.steps) {
+        // Wait for dependencies
+        if (step.waitFor) {
+          for (const depId of step.waitFor) {
+            while (!completed.has(depId)) {
+              // In real implementation, this would wait for the step to complete
+              // For now, we simulate completion
+              await new Promise(resolve => setTimeout(resolve, 10))
+            }
+          }
+        }
+
+        // Execute step
+        await this.executeStep(session, step)
+        completed.add(step.stepId)
+      }
+
+      session.status = 'completed'
+      session.completedAt = Date.now()
+    } catch (error) {
+      session.status = 'failed'
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      this.emitEvent({ type: 'session_failed', sessionId: session.id, data: { error: errorMessage }, timestamp: Date.now() })
+    }
+
+    session.updatedAt = Date.now()
+    await this.persistSessions()
+
+    // Aggregate results
+    return this.aggregateResults(session.id)
+  }
+
+  /**
+   * Execute a single step
+   */
+  private async executeStep(session: CollaborationSession, step: ExecutionStep): Promise<void> {
+    const task = session.tasks.find(t => t.id === step.taskId)
+    if (!task) return
+
+    task.status = 'in_progress'
+    task.startedAt = Date.now()
+
+    const agent = session.agents.get(step.agentId)
+    if (agent) {
+      agent.status = 'working'
+      agent.currentTask = step.taskId
+    }
+
+    try {
+      // Simulate task execution
+      const result: AgentOutput = {
+        agentId: step.agentId,
+        role: agent?.config.role || 'orchestrator',
+        success: true,
+        content: `Executed: ${task.description}`,
+        metadata: { stepId: step.stepId, taskId: step.taskId, executedAt: Date.now() }
+      }
+
+      task.result = result
+      task.status = 'completed'
+      task.completedAt = Date.now()
+
+      if (agent) {
+        agent.status = 'completed'
+        agent.result = result
+        agent.endTime = Date.now()
+      }
+
+      session.results.set(step.taskId, result)
+      this.emitEvent({ type: 'task_completed', sessionId: session.id, agentId: step.agentId, taskId: step.taskId, timestamp: Date.now() })
+    } catch (error) {
+      task.status = 'failed'
+      if (agent) {
+        agent.status = 'failed'
+        agent.error = error instanceof Error ? error.message : String(error)
+      }
+    }
+
+    session.updatedAt = Date.now()
+  }
+
+  /**
+   * Set aggregation strategy
+   */
+  setAggregationStrategy(strategy: AggregationConfig['strategy']): void {
+    this.aggregationStrategy = strategy
+  }
+
+  /**
+   * Get current aggregation strategy
+   */
+  getAggregationStrategy(): AggregationConfig['strategy'] {
+    return this.aggregationStrategy
+  }
+
+  /**
+   * Get task decomposer instance
+   */
+  getTaskDecomposer(): TaskDecomposer {
+    return this.taskDecomposer
+  }
+
+  /**
+   * Get orchestrator instance
+   */
+  getOrchestrator(): Orchestrator {
+    return this.orchestrator
+  }
+
+  /**
+   * Get result aggregator instance
+   */
+  getResultAggregator(): ResultAggregator {
+    return this.aggregator
   }
 
   // ========== Private Methods ==========
