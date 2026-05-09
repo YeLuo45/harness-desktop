@@ -83,7 +83,7 @@ export class LLMBridge {
     // Heuristics for planning mode:
     // 1. Message contains planning keywords
     // 2. Message is long and complex
-    const planningKeywords = ['refactor', 'restructure', 'rebuild', 'migrate', 'implement', 'create a', 'build a', 'set up a']
+    const planningKeywords = ['refactor', 'restructure', 'rebuild', 'migrate', 'implement', 'create a', 'build a', 'set up a', '重构', '重塑', '重建', '迁移']
     const isLongTask = lastMessage.length > 500
 
     const hasPlanningKeyword = planningKeywords.some(kw =>
