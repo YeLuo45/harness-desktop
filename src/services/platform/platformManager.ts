@@ -13,6 +13,8 @@ import {
 } from './types'
 import { ElectronPlatformAdapter } from './adapters/electronAdapter'
 import { WebPlatformAdapter } from './adapters/webAdapter'
+import { TelegramPlatformAdapter } from './adapters/telegramAdapter'
+import { FeishuPlatformAdapter } from './adapters/feishuAdapter'
 
 export { type PlatformType, type PlatformAdapter, type PlatformCapabilities }
 
@@ -103,16 +105,12 @@ class PlatformManager {
         return new WebPlatformAdapter()
       
       case 'telegram':
-        // Telegram adapter - placeholder for future
-        console.warn('Telegram adapter not yet implemented, falling back to web')
-        if (platformAdapters.web) return platformAdapters.web
-        return new WebPlatformAdapter()
+        if (platformAdapters.telegram) return platformAdapters.telegram
+        return new TelegramPlatformAdapter()
       
       case 'feishu':
-        // Feishu adapter - placeholder for future
-        console.warn('Feishu adapter not yet implemented, falling back to web')
-        if (platformAdapters.web) return platformAdapters.web
-        return new WebPlatformAdapter()
+        if (platformAdapters.feishu) return platformAdapters.feishu
+        return new FeishuPlatformAdapter()
       
       default:
         return null

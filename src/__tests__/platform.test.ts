@@ -117,16 +117,17 @@ describe('Platform Manager', () => {
       expect(caps.ui.tray).toBe(false)
     })
 
-    it('should return telegram capabilities when on telegram (falls back to web adapter)', async () => {
+    it('should return telegram capabilities when on telegram', async () => {
       vi.stubEnv('HARNESS_PLATFORM', 'telegram')
       await platformManager.initialize()
       
       const caps = getCapabilities()
       
-      // Falls back to web adapter since TelegramPlatformAdapter not yet implemented
+      // Telegram adapter now implemented - has telegram communication capability
       expect(caps.fs.read).toBe(false)
       expect(caps.fs.write).toBe(false)
-      expect(caps.communication.webhooks).toBe(true)
+      expect(caps.communication.telegram).toBe(true)
+      expect(caps.communication.feishu).toBe(false)
     })
   })
 
