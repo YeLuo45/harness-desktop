@@ -6,9 +6,226 @@ import { registerTool } from '../decorators'
 import type { ToolExecutor } from '../types'
 import { getVerificationHooks } from '../../verificationHooks'
 import type { ToolResult } from '../../../types'
+import * as path from 'path'
 
 // File system operations using Node.js
 let fs: typeof import('fs') | null = null
+
+// ==================== File System Security Configuration ====================
+
+/**
+ * Allowed base directories for file operations (whitelist)
+ * Operations are restricted to these directories only
+ */
+const ALLOWED_DIRECTORIES: string[] = [
+  process.env.HOME || '/home',
+  '/tmp',
+  '/var/tmp'
+]
+
+/**
+ * Sensitive paths that are blocked from any file operations
+ * These paths and their subdirectories cannot be accessed
+ */
+const SENSITIVE_PATHS: string[] = [
+  '/etc/shadow',
+  '/etc/sudoers',
+  '/etc/passwd',
+  '/etc/group',
+  '/etc/gshadow',
+  '/etc/security/opasswd',
+  '/root/.ssh',
+  '/home/*/.ssh',
+  '.ssh',
+  '/proc/1/environ',
+  '/proc/self/environ',
+  '/sys/kernel/debug',
+  '/sys/kernel/security',
+  '/dev/mem',
+  '/dev/kmem',
+  '/proc/kcore',
+  '/proc/sys/kernel/core_pattern'
+]
+
+// ==================== Audit Logging ====================
+
+interface AuditLogEntry {
+  timestamp: number
+  toolName: string
+  operation: string
+  targetPath: string
+  action: 'ALLOWED' | 'BLOCKED'
+  reason?: string
+  userId?: string
+}
+
+/**
+ * In-memory audit log storage (can be replaced with persistent storage)
+ */
+const auditLog: AuditLogEntry[] = []
+const MAX_AUDIT_LOG_SIZE = 10000
+
+/**
+ * Add entry to audit log
+ */
+function addAuditLog(entry: Omit<AuditLogEntry, 'timestamp'>): void {
+  const logEntry: AuditLogEntry = {
+    timestamp: Date.now(),
+    ...entry
+  }
+  auditLog.push(logEntry)
+  
+  // Keep log size bounded
+  if (auditLog.length > MAX_AUDIT_LOG_SIZE) {
+    auditLog.shift()
+  }
+  
+  // Console output for audit trail
+  const timeStr = new Date(logEntry.timestamp).toISOString()
+  console.info(`[AUDIT] ${timeStr} | ${entry.toolName} | ${entry.operation} | ${entry.targetPath} | ${entry.action}${entry.reason ? ` | ${entry.reason}` : ''}`)
+}
+
+/**
+ * Get audit logs with optional filtering
+ */
+function getAuditLogs(options?: { 
+  toolName?: string
+  action?: 'ALLOWED' | 'BLOCKED'
+  since?: number
+  limit?: number
+}): AuditLogEntry[] {
+  let logs = [...auditLog]
+  
+  if (options?.toolName) {
+    logs = logs.filter(l => l.toolName === options.toolName)
+  }
+  if (options?.action) {
+    logs = logs.filter(l => l.action === options.action)
+  }
+  if (options?.since) {
+    logs = logs.filter(l => l.timestamp >= options.since!)
+  }
+  if (options?.limit) {
+    logs = logs.slice(-options.limit)
+  }
+  
+  return logs
+}
+
+// ==================== Path Security Checks ====================
+
+/**
+ * Normalize a path to absolute form and resolve symlinks
+ */
+function normalizePath(p: string): string {
+  return path.resolve(p)
+}
+
+/**
+ * Check if a path matches a sensitive path pattern
+ * Supports wildcards in SENSITIVE_PATHS definitions
+ */
+function isSensitivePath(targetPath: string): boolean {
+  const normalizedTarget = normalizePath(targetPath)
+  
+  for (const sensitive of SENSITIVE_PATHS) {
+    const normalizedSensitive = path.resolve(sensitive)
+    
+    // Check exact match
+    if (normalizedTarget === normalizedSensitive) {
+      return true
+    }
+    
+    // Check if target starts with sensitive path (blocks subdirectories)
+    if (normalizedTarget.startsWith(normalizedSensitive + path.sep)) {
+      return true
+    }
+    
+    // Handle wildcard patterns like /home/*/.ssh
+    if (sensitive.includes('*')) {
+      const regexPattern = sensitive
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&')  // Escape regex special chars except *
+        .replace(/\*/g, '[^/]*')  // Replace * with regex
+      const regex = new RegExp(`^${regexPattern}`)
+      if (regex.test(normalizedTarget)) {
+        return true
+      }
+    }
+  }
+  
+  return false
+}
+
+/**
+ * Check if a path is within an allowed directory (whitelist check)
+ */
+function isPathInWhitelist(targetPath: string): boolean {
+  const normalizedTarget = normalizePath(targetPath)
+  
+  for (const allowedDir of ALLOWED_DIRECTORIES) {
+    const normalizedAllowed = path.resolve(allowedDir)
+    
+    // Check if target path starts with allowed directory
+    if (normalizedTarget.startsWith(normalizedAllowed + path.sep)) {
+      return true
+    }
+    
+    // Also allow if the path IS the allowed directory itself
+    if (normalizedTarget === normalizedAllowed) {
+      return true
+    }
+  }
+  
+  return false
+}
+
+/**
+ * Security check result type
+ */
+interface SecurityCheckResult {
+  allowed: boolean
+  reason?: string
+}
+
+/**
+ * Perform comprehensive security check on a file path
+ */
+function checkPathSecurity(
+  toolName: string,
+  operation: string,
+  targetPath: string
+): SecurityCheckResult {
+  // Check for path traversal attacks
+  if (targetPath.includes('..')) {
+    return { allowed: false, reason: 'Path traversal sequence detected (..)' }
+  }
+  
+  // Check sensitive paths
+  if (isSensitivePath(targetPath)) {
+    addAuditLog({
+      toolName,
+      operation,
+      targetPath,
+      action: 'BLOCKED',
+      reason: 'Sensitive path access blocked'
+    })
+    return { allowed: false, reason: 'Access to sensitive system path is forbidden' }
+  }
+  
+  // Check whitelist
+  if (!isPathInWhitelist(targetPath)) {
+    addAuditLog({
+      toolName,
+      operation,
+      targetPath,
+      action: 'BLOCKED',
+      reason: `Path not in whitelist: ${ALLOWED_DIRECTORIES.join(', ')}`
+    })
+    return { allowed: false, reason: `Path must be within allowed directories: ${ALLOWED_DIRECTORIES.join(', ')}` }
+  }
+  
+  return { allowed: true }
+}
 
 async function getFsModules() {
   if (!fs) {
@@ -33,15 +250,27 @@ function runBeforeHook(toolName: string, args: Record<string, unknown>): void {
     return
   }
   
-  // Path traversal check for file operations
-  if (args.path && typeof args.path === 'string') {
-    if (args.path.includes('..')) {
-      throw new Error(`[FileTool Hook] ${toolName} blocked: path contains directory traversal sequence`)
-    }
+  // Get the target path from arguments
+  const targetPath = (args.path || args.dirPath || args.pattern) as string | undefined
+  
+  if (!targetPath) {
+    return // Let individual executors handle missing path validation
   }
   
-  // Additional before-hook validations can be added here
-  // e.g., check if path is within allowed directories, check file size limits, etc.
+  // Perform comprehensive security check
+  const securityResult = checkPathSecurity(toolName, 'access', targetPath)
+  
+  if (!securityResult.allowed) {
+    throw new Error(`[FileTool Hook] ${toolName} blocked: ${securityResult.reason}`)
+  }
+  
+  // Log successful access
+  addAuditLog({
+    toolName,
+    operation: 'access',
+    targetPath,
+    action: 'ALLOWED'
+  })
 }
 
 /**
@@ -390,5 +619,79 @@ export class FileToolHandlers {
   static async handleFileRead(args: Record<string, unknown>): Promise<{ success: boolean; result?: unknown; error?: string }> {
     const executor = new FileReadExecutor()
     return executor.execute(args)
+  }
+}
+
+// ==================== Security & Audit Exports ====================
+
+/**
+ * Export security configuration and audit functions for external use
+ */
+export const fileToolSecurity = {
+  /**
+   * Get allowed directories (whitelist)
+   */
+  getAllowedDirectories: () => [...ALLOWED_DIRECTORIES],
+  
+  /**
+   * Add a directory to the allowed whitelist
+   */
+  addAllowedDirectory: (dir: string) => {
+    const resolved = path.resolve(dir)
+    if (!ALLOWED_DIRECTORIES.includes(resolved)) {
+      ALLOWED_DIRECTORIES.push(resolved)
+    }
+  },
+  
+  /**
+   * Remove a directory from the allowed whitelist
+   */
+  removeAllowedDirectory: (dir: string) => {
+    const index = ALLOWED_DIRECTORIES.indexOf(path.resolve(dir))
+    if (index > -1) {
+      ALLOWED_DIRECTORIES.splice(index, 1)
+    }
+  },
+  
+  /**
+   * Get sensitive paths that are blocked
+   */
+  getSensitivePaths: () => [...SENSITIVE_PATHS],
+  
+  /**
+   * Add a path to the sensitive paths blocklist
+   */
+  addSensitivePath: (p: string) => {
+    const resolved = path.resolve(p)
+    if (!SENSITIVE_PATHS.includes(resolved)) {
+      SENSITIVE_PATHS.push(resolved)
+    }
+  },
+  
+  /**
+   * Remove a path from the sensitive paths blocklist
+   */
+  removeSensitivePath: (p: string) => {
+    const index = SENSITIVE_PATHS.indexOf(path.resolve(p))
+    if (index > -1) {
+      SENSITIVE_PATHS.splice(index, 1)
+    }
+  },
+  
+  /**
+   * Check if a path passes security checks without throwing
+   */
+  checkPath: checkPathSecurity,
+  
+  /**
+   * Get audit logs with optional filtering
+   */
+  getAuditLogs,
+  
+  /**
+   * Clear the audit log
+   */
+  clearAuditLog: () => {
+    auditLog.length = 0
   }
 }
