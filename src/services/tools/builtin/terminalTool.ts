@@ -4,6 +4,8 @@
 
 import { registerTool } from '../decorators'
 import type { ToolExecutor } from '../types'
+import { VerificationHooks, getVerificationHooks } from '../../verificationHooks'
+import type { ToolResult } from '../../../types'
 
 // Child process module - only available in Node.js environment
 let childProcess: typeof import('child_process') | null = null
@@ -17,6 +19,42 @@ async function getChildProcess() {
     }
   }
   return childProcess
+}
+
+/**
+ * Run before hook validation - throws on failure
+ */
+function runBeforeHook(hooks: VerificationHooks, toolName: string, args: Record<string, unknown>): void {
+  if (hooks.getConfig().level === 'disabled') {
+    return
+  }
+  // Create a mock ToolResult for before validation (checking arguments)
+  const mockResult: ToolResult = {
+    toolName,
+    arguments: args,
+    result: null,
+    success: true,
+    timestamp: Date.now()
+  }
+  const verification = hooks.verify(mockResult)
+  if (!verification.passed) {
+    const errorMsg = hooks.formatVerificationMessage(verification)
+    throw new Error(`Before hook failed for ${toolName}: ${errorMsg}`)
+  }
+}
+
+/**
+ * Run after hook validation - throws on failure
+ */
+function runAfterHook(hooks: VerificationHooks, result: ToolResult): void {
+  if (hooks.getConfig().level === 'disabled') {
+    return
+  }
+  const verification = hooks.verify(result)
+  if (!verification.passed) {
+    const errorMsg = hooks.formatVerificationMessage(verification)
+    throw new Error(`After hook failed for ${result.toolName}: ${errorMsg}`)
+  }
 }
 
 class BashExecuteExecutor implements ToolExecutor {
@@ -33,20 +71,43 @@ class BashExecuteExecutor implements ToolExecutor {
       return { success: false, error: 'command is required' }
     }
 
+    // Get verification hooks instance
+    const hooks = getVerificationHooks()
+
+    // Run before hook - throws on failure
+    runBeforeHook(hooks, 'bash_execute', args)
+
+    let executionResult: { success: boolean; result?: unknown; error?: string }
+
     try {
       const result = cp.execSync(command, {
         encoding: 'utf-8',
         timeout,
         stdio: 'pipe'
       })
-      return { success: true, result }
+      executionResult = { success: true, result }
     } catch (error: any) {
-      return { 
+      executionResult = { 
         success: false, 
         error: error.message || `Command failed: ${command}`,
         result: error.stdout ? String(error.stdout) : undefined
       }
     }
+
+    // Build ToolResult for after hook
+    const toolResult: ToolResult = {
+      toolName: 'bash_execute',
+      arguments: args,
+      result: executionResult.result,
+      success: executionResult.success,
+      error: executionResult.error,
+      timestamp: Date.now()
+    }
+
+    // Run after hook - throws on failure
+    runAfterHook(hooks, toolResult)
+
+    return executionResult
   }
 }
 
@@ -65,6 +126,14 @@ class GrepSearchExecutor implements ToolExecutor {
       return { success: false, error: 'pattern is required' }
     }
 
+    // Get verification hooks instance
+    const hooks = getVerificationHooks()
+
+    // Run before hook - throws on failure
+    runBeforeHook(hooks, 'grep_search', args)
+
+    let executionResult: { success: boolean; result?: unknown; error?: string }
+
     try {
       // Build grep command
       let cmd = 'grep'
@@ -78,17 +147,33 @@ class GrepSearchExecutor implements ToolExecutor {
       }
 
       const result = cp.execSync(cmd, { encoding: 'utf-8', stdio: 'pipe' })
-      return { success: true, result }
+      executionResult = { success: true, result }
     } catch (error: any) {
       // grep returns exit code 1 when no matches found, which throws
       if (error.status === 1) {
-        return { success: true, result: [] }
-      }
-      return { 
-        success: false, 
-        error: error.message || `Search failed for: ${pattern}`
+        executionResult = { success: true, result: [] }
+      } else {
+        executionResult = { 
+          success: false, 
+          error: error.message || `Search failed for: ${pattern}`
+        }
       }
     }
+
+    // Build ToolResult for after hook
+    const toolResult: ToolResult = {
+      toolName: 'grep_search',
+      arguments: args,
+      result: executionResult.result,
+      success: executionResult.success,
+      error: executionResult.error,
+      timestamp: Date.now()
+    }
+
+    // Run after hook - throws on failure
+    runAfterHook(hooks, toolResult)
+
+    return executionResult
   }
 }
 
@@ -104,6 +189,14 @@ class ProjectTreeExecutor implements ToolExecutor {
     const includeHidden = (args.include_hidden as boolean) || false
     const excludePatterns = (args.exclude_patterns as string[]) || []
 
+    // Get verification hooks instance
+    const hooks = getVerificationHooks()
+
+    // Run before hook - throws on failure
+    runBeforeHook(hooks, 'project_tree', args)
+
+    let executionResult: { success: boolean; result?: unknown; error?: string }
+
     try {
       // Build find command
       let cmd = 'find'
@@ -118,13 +211,28 @@ class ProjectTreeExecutor implements ToolExecutor {
 
       const result = cp.execSync(cmd, { encoding: 'utf-8', stdio: 'pipe' })
       const files = result.split('\n').filter(f => f.trim())
-      return { success: true, result: files }
+      executionResult = { success: true, result: files }
     } catch (error: any) {
-      return { 
+      executionResult = { 
         success: false, 
         error: error.message || `Failed to list project tree`
       }
     }
+
+    // Build ToolResult for after hook
+    const toolResult: ToolResult = {
+      toolName: 'project_tree',
+      arguments: args,
+      result: executionResult.result,
+      success: executionResult.success,
+      error: executionResult.error,
+      timestamp: Date.now()
+    }
+
+    // Run after hook - throws on failure
+    runAfterHook(hooks, toolResult)
+
+    return executionResult
   }
 }
 
