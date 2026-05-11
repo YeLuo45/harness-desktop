@@ -1,6 +1,7 @@
 import { createModelAdapter, V2_TOOLS, type ModelAdapter } from './modelAdapters'
 import type { ChatMessage, ToolCall, ToolDefinition, ToolResult, ExecutionPlan, PlanStep } from '../types'
 import { v4 as uuidv4 } from 'uuid'
+import { getToolRegistry } from './tools'
 
 interface LLMStreamCallbacks {
   onChunk: (chunk: string) => void
@@ -34,7 +35,19 @@ export class LLMBridge {
       return this.streamChat(messages, streamCallbacks)
     }
 
-    const response = await this.adapter.chat(messages, this.systemPrompt, V2_TOOLS)
+    // Get tools from ToolRegistry if available, otherwise fall back to V2_TOOLS
+    let tools = V2_TOOLS
+    try {
+      const registry = getToolRegistry()
+      const availableTools = registry.getAvailableTools()
+      if (availableTools.length > 0) {
+        tools = availableTools
+      }
+    } catch {
+      // ToolRegistry not initialized yet, use V2_TOOLS
+    }
+
+    const response = await this.adapter.chat(messages, this.systemPrompt, tools)
     return {
       content: response.content,
       toolCalls: response.toolCalls || []
@@ -47,11 +60,23 @@ export class LLMBridge {
   ): Promise<{ content: string; toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> }> {
     let fullContent = ''
 
+    // Get tools from ToolRegistry if available
+    let tools = V2_TOOLS
+    try {
+      const registry = getToolRegistry()
+      const availableTools = registry.getAvailableTools()
+      if (availableTools.length > 0) {
+        tools = availableTools
+      }
+    } catch {
+      // ToolRegistry not initialized yet, use V2_TOOLS
+    }
+
     return new Promise((resolve) => {
       this.adapter.stream({
         messages,
         systemPrompt: this.systemPrompt,
-        tools: V2_TOOLS,
+        tools,
         onChunk: (chunk) => {
           fullContent += chunk
           callbacks.onChunk(chunk)

@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import type { SubAgent, SubTask, SubTaskResult, SubAgentResult, KVCacheSnapshot, ToolCall, ToolResult, MemoryPointer } from '../types'
+import { getToolRegistry, type ToolRegistry } from './tools'
 
 interface SubAgentManagerOptions {
   maxConcurrentAgents?: number
@@ -214,7 +215,8 @@ export class SubAgentManager {
    * Find a task by ID across all agents
    */
   private findTaskById(taskId: string): SubTask | undefined {
-    for (const agent of this.agents.values()) {
+    const agentsArray = Array.from(this.agents.values())
+    for (const agent of agentsArray) {
       const task = agent.tasks.find(t => t.id === taskId)
       if (task) return task
     }
@@ -446,8 +448,9 @@ export class SubAgentManager {
    */
   clearCompletedAgents(): number {
     let cleared = 0
+    const agentsArray = Array.from(this.agents.entries())
 
-    for (const [id, agent] of this.agents) {
+    for (const [id, agent] of agentsArray) {
       if (agent.status === 'completed' || agent.status === 'failed' || agent.status === 'cancelled') {
         // Don't clear if there are child agents depending on this
         const hasActiveChildren = Array.from(this.agents.values()).some(

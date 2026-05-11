@@ -5,3 +5,7 @@
 
 export * from './types'
 export { ToolRegistry, getToolRegistry, initToolRegistry } from './toolRegistry'
+export { registerTool, getToolMetadata, getAllToolMetadata, hasToolMetadata } from './decorators'
+
+// Re-export tool executor type for convenience
+export type { ToolExecutor } from './types'

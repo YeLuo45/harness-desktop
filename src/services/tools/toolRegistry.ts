@@ -8,6 +8,7 @@ import {
   type ToolRegistryEntryInput,
   type ToolQuery,
   type ToolExecutor,
+  type ToolCategory,
   generateToolId,
   BUILT_IN_TOOLS
 } from './types'
@@ -68,6 +69,13 @@ export class ToolRegistry {
    */
   getAll(): ToolRegistryEntry[] {
     return Array.from(this.tools.values())
+  }
+
+  /**
+   * List all tool names (alias for backward compatibility)
+   */
+  list(): string[] {
+    return Array.from(this.tools.keys())
   }
 
   /**
@@ -149,7 +157,8 @@ export class ToolRegistry {
    */
   getStats(): Record<string, number> {
     const stats: Record<string, number> = {}
-    for (const tool of this.tools.values()) {
+    const toolsArray = Array.from(this.tools.values())
+    for (const tool of toolsArray) {
       stats[tool.category] = (stats[tool.category] || 0) + 1
     }
     return stats
@@ -203,6 +212,110 @@ export class ToolRegistry {
         error: error instanceof Error ? error.message : String(error)
       }
     }
+  }
+
+  /**
+   * Discover and register tools from a directory
+   * Scans for tool modules and registers them
+   */
+  async discover(dirPath: string): Promise<number> {
+    let count = 0
+    
+    try {
+      // Dynamic import of fs for directory scanning
+      const fs = await import('fs')
+      const path = await import('path')
+      
+      if (!fs.readdirSync) {
+        console.warn('[ToolRegistry] discover: fs not available')
+        return 0
+      }
+
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+      
+      for (const entry of entries) {
+        if (entry.isFile() && entry.name.endsWith('.ts')) {
+          try {
+            // Try to import the module
+            const modulePath = path.resolve(dirPath, entry.name)
+            const module = await import(modulePath)
+            
+            // Look for tool definitions and executors
+            if (module.fileToolDefinitions && module.fileToolExecutors) {
+              // Register file tools
+              const defs = module.fileToolDefinitions as Array<{
+                name: string
+                description: string
+                parameters: any
+                category: string
+                tags: string[]
+              }>
+              const execs = module.fileToolExecutors as Record<string, () => Promise<ToolExecutor>>
+              
+              for (const def of defs) {
+                const executorFactory = execs[def.name]
+                if (executorFactory && !this.has(def.name)) {
+                  this.register({
+                    name: def.name,
+                    description: def.description,
+                    version: '1.0.0',
+                    definition: {
+                      name: def.name,
+                      description: def.description,
+                      parameters: def.parameters as any
+                    },
+                    factory: executorFactory,
+                    category: def.category as ToolCategory,
+                    tags: def.tags
+                  })
+                  count++
+                }
+              }
+            }
+            
+            if (module.terminalToolDefinitions && module.terminalToolExecutors) {
+              // Register terminal tools
+              const defs = module.terminalToolDefinitions as Array<{
+                name: string
+                description: string
+                parameters: any
+                category: string
+                tags: string[]
+              }>
+              const execs = module.terminalToolExecutors as Record<string, () => Promise<ToolExecutor>>
+              
+              for (const def of defs) {
+                const executorFactory = execs[def.name]
+                if (executorFactory && !this.has(def.name)) {
+                  this.register({
+                    name: def.name,
+                    description: def.description,
+                    version: '1.0.0',
+                    definition: {
+                      name: def.name,
+                      description: def.description,
+                      parameters: def.parameters as any
+                    },
+                    factory: executorFactory,
+                    category: def.category as ToolCategory,
+                    tags: def.tags
+                  })
+                  count++
+                }
+              }
+            }
+          } catch (err) {
+            console.warn(`[ToolRegistry] Failed to load tool module ${entry.name}:`, err)
+          }
+        }
+      }
+      
+      console.log(`[ToolRegistry] Discovered ${count} tools from ${dirPath}`)
+    } catch (err) {
+      console.warn(`[ToolRegistry] discover: Error scanning directory ${dirPath}:`, err)
+    }
+    
+    return count
   }
 }
 

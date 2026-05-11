@@ -62,7 +62,8 @@ export interface ToolQuery {
 }
 
 // 创建注册项（不含自动生成的字段）
-export type ToolRegistryEntryInput = Omit<ToolRegistryEntry, 'id' | 'registeredAt' | 'updatedAt'>
+// enabled 在 register 时有默认值，所以这里设为可选
+export type ToolRegistryEntryInput = Omit<ToolRegistryEntry, 'id' | 'registeredAt' | 'updatedAt' | 'enabled'> & Partial<Pick<ToolRegistryEntry, 'enabled'>>
 
 /**
  * 生成唯一 ID
