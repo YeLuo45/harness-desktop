@@ -1,7 +1,7 @@
 /**
  * P9: Task Scheduling - TaskScheduler
  * 
- * Core scheduler implementation with localStorage persistence,
+ * Core scheduler implementation with IndexedDB persistence via CronStore,
  * cron parsing, dependency chains, and exponential backoff retry.
  */
 
@@ -16,10 +16,7 @@ import type {
 } from './types'
 import { getNextRunTime as getCronNextRunTime, isValidCron } from './cronParser'
 import { RetryQueueImpl, getBackoffDelay, getMaxRetries } from './taskQueue'
-
-const STORAGE_KEY = 'harness_scheduled_tasks'
-const EXECUTION_KEY = 'harness_task_executions'
-const DEPENDENCY_KEY = 'harness_task_dependencies'
+import { cronStore, CronStore } from './cronStore'
 
 export class TaskScheduler {
   private tasks: Map<string, ScheduledTask> = new Map()
@@ -54,14 +51,21 @@ export class TaskScheduler {
     if (this.config.persistTasks) {
       await this.loadTasks()
       await this.loadDependencies()
+      await this.loadExecutions()
     }
     
     // Schedule all enabled tasks
-    for (const task of this.tasks.values()) {
+    this.tasks.forEach(task => {
       if (task.enabled) {
         this.scheduleTask(task)
       }
-    }
+    })
+    
+    // Record initialization state
+    await cronStore.saveSchedulerState({
+      lastInitialized: Date.now(),
+      version: 1
+    })
     
     this.initialized = true
   }
@@ -257,7 +261,7 @@ export class TaskScheduler {
           : Date.now() + (task.intervalMs || 0)
       case 'cron':
         if (task.cronExpression) {
-          return getCronNextRunTime(task.cronExpression, task.lastRunAt || Date.now())
+          return getCronNextRunTime(task.cronExpression, task.lastRunAt || Date.now()) ?? undefined
         }
         return undefined
       default:
@@ -471,11 +475,8 @@ export class TaskScheduler {
 
   private async loadTasks(): Promise<void> {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY)
-      if (stored) {
-        const tasks: ScheduledTask[] = JSON.parse(stored)
-        tasks.forEach(task => this.tasks.set(task.id, task))
-      }
+      const tasks = await cronStore.getAllTasks()
+      tasks.forEach(task => this.tasks.set(task.id, task))
     } catch (error) {
       console.error('Failed to load tasks from storage:', error)
     }
@@ -483,13 +484,19 @@ export class TaskScheduler {
 
   private async loadDependencies(): Promise<void> {
     try {
-      const stored = localStorage.getItem(DEPENDENCY_KEY)
-      if (stored) {
-        const deps: TaskDependency[] = JSON.parse(stored)
-        deps.forEach(dep => this.dependencies.set(dep.taskId, dep))
-      }
+      const deps = await cronStore.getAllDependencies()
+      deps.forEach(dep => this.dependencies.set(dep.taskId, dep))
     } catch (error) {
       console.error('Failed to load dependencies from storage:', error)
+    }
+  }
+
+  private async loadExecutions(): Promise<void> {
+    try {
+      const executions = await cronStore.getAllExecutions()
+      executions.forEach((execList, taskId) => this.executions.set(taskId, execList))
+    } catch (error) {
+      console.error('Failed to load executions from storage:', error)
     }
   }
 
@@ -498,7 +505,7 @@ export class TaskScheduler {
     
     try {
       const tasks = Array.from(this.tasks.values())
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks))
+      await cronStore.saveTasks(tasks)
     } catch (error) {
       console.error('Failed to persist tasks:', error)
     }
@@ -508,8 +515,7 @@ export class TaskScheduler {
     if (!this.config.persistTasks) return
     
     try {
-      const deps = Array.from(this.dependencies.values())
-      localStorage.setItem(DEPENDENCY_KEY, JSON.stringify(deps))
+      await cronStore.saveDependencies(this.dependencies)
     } catch (error) {
       console.error('Failed to persist dependencies:', error)
     }
@@ -519,8 +525,11 @@ export class TaskScheduler {
     if (!this.config.persistExecutions) return
     
     try {
-      const executions: [string, TaskExecution[]][] = Array.from(this.executions.entries())
-      localStorage.setItem(EXECUTION_KEY, JSON.stringify(executions))
+      this.executions.forEach((execList, taskId) => {
+        execList.forEach(exec => {
+          cronStore.saveExecution(taskId, exec)
+        })
+      })
     } catch (error) {
       console.error('Failed to persist executions:', error)
     }

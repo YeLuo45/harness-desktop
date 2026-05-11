@@ -1,12 +1,15 @@
 import { v4 as uuidv4 } from 'uuid'
 import type { SubAgent, SubTask, SubTaskResult, SubAgentResult, KVCacheSnapshot, ToolCall, ToolResult, MemoryPointer } from '../types'
 import { getToolRegistry, type ToolRegistry } from './tools'
+import { getDelegationStore, type DelegationStore } from './persistence'
+import type { DelegationState } from './persistence/types'
 
 interface SubAgentManagerOptions {
   maxConcurrentAgents?: number
   maxKVCacheSize?: number
   onTaskComplete?: (agentId: string, task: SubTask) => void
   onAgentComplete?: (result: SubAgentResult) => void
+  delegationStore?: DelegationStore
 }
 
 interface TaskQueueItem {
@@ -22,6 +25,7 @@ export class SubAgentManager {
   private maxKVCacheSize: number
   private onTaskComplete?: (agentId: string, task: SubTask) => void
   private onAgentComplete?: (result: SubAgentResult) => void
+  private delegationStore: DelegationStore
 
   // Tool executor callback - will be set by the app
   private toolExecutor: ((toolName: string, args: Record<string, unknown>) => Promise<ToolResult>) | null = null
@@ -31,6 +35,101 @@ export class SubAgentManager {
     this.maxKVCacheSize = options.maxKVCacheSize || 128000
     this.onTaskComplete = options.onTaskComplete
     this.onAgentComplete = options.onAgentComplete
+    this.delegationStore = options.delegationStore || getDelegationStore()
+  }
+
+  /**
+   * Initialize the sub-agent manager and recover pending/in_progress delegations
+   */
+  async initialize(): Promise<void> {
+    await this.recoverDelegations()
+  }
+
+  /**
+   * Save delegation state to disk (for a specific agent's delegation)
+   */
+  private async saveDelegation(agentId: string): Promise<void> {
+    const agent = this.agents.get(agentId)
+    if (!agent) return
+
+    const delegation: DelegationState = {
+      id: `delegation_${agentId}`,
+      delegatorId: agent.parentId || 'system',
+      delegateId: agentId,
+      scope: [],
+      permissions: [],
+      status: agent.status === 'running' ? 'active' : 
+              agent.status === 'idle' ? 'pending' : 
+              agent.status === 'completed' ? 'completed' : 
+              agent.status === 'failed' ? 'failed' : 'pending',
+      createdAt: agent.createdAt,
+      updatedAt: Date.now(),
+      expiresAt: undefined,
+      metadata: {
+        agentName: agent.name,
+        taskCount: agent.tasks.length,
+        tasks: agent.tasks.map(t => ({
+          id: t.id,
+          description: t.description,
+          status: t.status,
+          dependencies: t.dependencies
+        }))
+      }
+    }
+
+    await this.delegationStore.save(delegation)
+  }
+
+  /**
+   * Recover pending/in_progress delegations from disk
+   */
+  async recoverDelegations(): Promise<void> {
+    try {
+      const delegations = await this.delegationStore.list()
+      const recoverableStatuses = ['pending', 'active', 'in_progress']
+
+      for (const delegation of delegations) {
+        if (recoverableStatuses.includes(delegation.status)) {
+          // Reconstruct agent from delegation metadata
+          if (delegation.metadata && typeof delegation.metadata === 'object') {
+            const meta = delegation.metadata as Record<string, unknown>
+            const agent: SubAgent = {
+              id: delegation.delegateId,
+              name: (meta.agentName as string) || 'recovered_agent',
+              status: delegation.status === 'active' ? 'running' : 
+                      delegation.status === 'completed' ? 'completed' :
+                      delegation.status === 'failed' ? 'failed' : 'idle',
+              parentId: delegation.delegatorId !== 'system' ? delegation.delegatorId : undefined,
+              tasks: (meta.tasks as Array<{
+                id: string
+                description: string
+                status: string
+                dependencies: string[]
+              }>)?.map(t => ({
+                id: t.id,
+                description: t.description,
+                toolCalls: [],
+                status: t.status as 'idle' | 'running' | 'completed' | 'failed' | 'cancelled',
+                parentId: delegation.delegateId,
+                dependencies: t.dependencies,
+                createdAt: delegation.createdAt
+              })) || [],
+              kvCache: {
+                pointers: [],
+                tokenCount: 0,
+                maxTokens: this.maxKVCacheSize
+              },
+              createdAt: delegation.createdAt
+            }
+
+            this.agents.set(agent.id, agent)
+            console.log(`[SubAgentManager] Recovered agent: ${agent.id} with ${agent.tasks.length} tasks`)
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('[SubAgentManager] Failed to recover delegations:', error)
+    }
   }
 
   /**
@@ -59,6 +158,12 @@ export class SubAgentManager {
     }
 
     this.agents.set(agent.id, agent)
+    
+    // Auto-save to disk
+    this.saveDelegation(agent.id).catch(err => {
+      console.warn(`[SubAgentManager] Failed to save delegation for agent ${agent.id}:`, err)
+    })
+    
     return agent
   }
 
@@ -80,6 +185,12 @@ export class SubAgentManager {
     }
 
     agent.tasks.push(task)
+    
+    // Auto-save to disk
+    this.saveDelegation(agentId).catch(err => {
+      console.warn(`[SubAgentManager] Failed to save delegation for agent ${agentId}:`, err)
+    })
+    
     return task
   }
 
@@ -106,6 +217,11 @@ export class SubAgentManager {
       agent.tasks.push(task)
       createdTasks.push(task)
     }
+
+    // Auto-save to disk
+    this.saveDelegation(agentId).catch(err => {
+      console.warn(`[SubAgentManager] Failed to save delegation for agent ${agentId}:`, err)
+    })
 
     return createdTasks
   }
@@ -244,6 +360,11 @@ export class SubAgentManager {
     task.status = 'running'
     task.startedAt = Date.now()
 
+    // Auto-save to disk
+    this.saveDelegation(agentId).catch(err => {
+      console.warn(`[SubAgentManager] Failed to save delegation for agent ${agentId}:`, err)
+    })
+
     const toolResults: ToolResult[] = []
     let outputParts: string[] = []
 
@@ -284,7 +405,7 @@ export class SubAgentManager {
     const taskFailed = !toolResults.every(r => r.success)
     task.status = taskFailed ? 'failed' : 'completed'
     task.completedAt = Date.now()
-    
+
     const firstError = toolResults.find(r => !r.success)?.error
     task.result = {
       success: !taskFailed,
@@ -292,6 +413,11 @@ export class SubAgentManager {
       output: outputParts.join('\n'),
       error: taskFailed ? (firstError || 'Task failed') : undefined
     }
+
+    // Auto-save to disk after task completion
+    this.saveDelegation(agentId).catch(err => {
+      console.warn(`[SubAgentManager] Failed to save delegation for agent ${agentId}:`, err)
+    })
 
     // Callback
     if (this.onTaskComplete) {
@@ -340,6 +466,11 @@ export class SubAgentManager {
     }
 
     agent.status = 'running'
+
+    // Auto-save to disk
+    this.saveDelegation(agentId).catch(err => {
+      console.warn(`[SubAgentManager] Failed to save delegation for agent ${agentId}:`, err)
+    })
 
     // Execute all tasks (handling dependencies)
     const allTaskResults: SubTaskResult[] = []
@@ -395,6 +526,11 @@ export class SubAgentManager {
     agent.status = allSucceeded ? 'completed' : 'failed'
     agent.completedAt = Date.now()
 
+    // Auto-save to disk after agent completion
+    this.saveDelegation(agentId).catch(err => {
+      console.warn(`[SubAgentManager] Failed to save delegation for agent ${agentId}:`, err)
+    })
+
     const result: SubAgentResult = {
       agentId,
       success: allSucceeded,
@@ -425,6 +561,11 @@ export class SubAgentManager {
         task.status = 'cancelled'
       }
     }
+
+    // Auto-save to disk after cancellation
+    this.saveDelegation(agentId).catch(err => {
+      console.warn(`[SubAgentManager] Failed to save delegation for agent ${agentId}:`, err)
+    })
 
     return true
   }
