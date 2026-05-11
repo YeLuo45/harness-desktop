@@ -1,7 +1,8 @@
-import { createModelAdapter, V2_TOOLS, type ModelAdapter } from './modelAdapters'
-import type { ChatMessage, ToolCall, ToolDefinition, ToolResult, ExecutionPlan, PlanStep } from '../types'
+import { V2_TOOLS } from './modelAdapters'
+import type { ChatMessage, ToolDefinition, ExecutionPlan, PlanStep } from '../types'
 import { v4 as uuidv4 } from 'uuid'
 import { getToolRegistry } from './tools'
+import { getProviderRegistry } from './providers'
 
 interface LLMStreamCallbacks {
   onChunk: (chunk: string) => void
@@ -11,20 +12,28 @@ interface LLMStreamCallbacks {
 }
 
 export class LLMBridge {
-  private adapter: ModelAdapter
   private systemPrompt: string = ''
 
-  constructor(provider: string, apiKey: string, endpoint: string, modelName: string) {
-    this.adapter = createModelAdapter(
-      provider as any,
-      apiKey,
-      endpoint,
-      modelName
-    )
+  constructor(_provider: string, _apiKey: string, _endpoint: string, _modelName: string) {
+    // Provider configuration is now handled by ProviderRegistry
+    // The LLMBridge now delegates to the active provider via getProvider()
   }
 
   setSystemPrompt(prompt: string) {
     this.systemPrompt = prompt
+  }
+
+  private getTools(): ToolDefinition[] {
+    try {
+      const registry = getToolRegistry()
+      const availableTools = registry.getAvailableTools()
+      if (availableTools.length > 0) {
+        return availableTools
+      }
+    } catch {
+      // ToolRegistry not initialized yet, use V2_TOOLS
+    }
+    return V2_TOOLS
   }
 
   async chat(messages: ChatMessage[], streamCallbacks?: LLMStreamCallbacks): Promise<{
@@ -35,19 +44,19 @@ export class LLMBridge {
       return this.streamChat(messages, streamCallbacks)
     }
 
-    // Get tools from ToolRegistry if available, otherwise fall back to V2_TOOLS
-    let tools = V2_TOOLS
-    try {
-      const registry = getToolRegistry()
-      const availableTools = registry.getAvailableTools()
-      if (availableTools.length > 0) {
-        tools = availableTools
-      }
-    } catch {
-      // ToolRegistry not initialized yet, use V2_TOOLS
+    const tools = this.getTools()
+    const provider = getProviderRegistry().getActive()
+
+    if (!provider) {
+      throw new Error('No active LLM provider configured. Please set up a provider first.')
     }
 
-    const response = await this.adapter.chat(messages, this.systemPrompt, tools)
+    const response = await provider.chat({
+      messages,
+      systemPrompt: this.systemPrompt,
+      tools
+    })
+
     return {
       content: response.content,
       toolCalls: response.toolCalls || []
@@ -59,21 +68,21 @@ export class LLMBridge {
     callbacks: LLMStreamCallbacks
   ): Promise<{ content: string; toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> }> {
     let fullContent = ''
-
-    // Get tools from ToolRegistry if available
-    let tools = V2_TOOLS
-    try {
-      const registry = getToolRegistry()
-      const availableTools = registry.getAvailableTools()
-      if (availableTools.length > 0) {
-        tools = availableTools
-      }
-    } catch {
-      // ToolRegistry not initialized yet, use V2_TOOLS
-    }
+    const tools = this.getTools()
 
     return new Promise((resolve) => {
-      this.adapter.stream({
+      const provider = getProviderRegistry().getActive()
+
+      if (!provider) {
+        callbacks.onError(new Error('No active LLM provider configured. Please set up a provider first.'))
+        resolve({
+          content: fullContent,
+          toolCalls: []
+        })
+        return
+      }
+
+      provider.stream({
         messages,
         systemPrompt: this.systemPrompt,
         tools,
@@ -83,8 +92,6 @@ export class LLMBridge {
         },
         onComplete: () => {
           callbacks.onComplete()
-          // For streaming, we parse tool calls from the full content if available
-          // In practice, the API will send tool calls in a separate format
           resolve({
             content: fullContent,
             toolCalls: []
@@ -147,10 +154,16 @@ Only use the following tools: file_read, file_write, file_append, dir_list, bash
 Do not include tool_status in the plan.
 `
 
-    const response = await this.adapter.chat(
-      [...messages.slice(0, -1), { role: 'user' as const, content: planPrompt }],
-      ''
-    )
+    const provider = getProviderRegistry().getActive()
+
+    if (!provider) {
+      throw new Error('No active LLM provider configured. Please set up a provider first.')
+    }
+
+    const response = await provider.chat({
+      messages: [...messages.slice(0, -1), { role: 'user' as const, content: planPrompt }],
+      systemPrompt: ''
+    })
 
     try {
       // Try to parse the response as JSON

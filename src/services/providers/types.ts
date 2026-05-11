@@ -1,91 +1,49 @@
-import type { ChatMessage, ChatResponse, StreamOptions, ModelProvider } from '../../types'
-
 /**
- * Provider capabilities - what features does this provider support
+ * LLM Provider Types and Interfaces
  */
-export interface ProviderCapabilities {
-  maxTokens: number
-  streaming: boolean
-  tools: boolean
-  vision?: boolean
+
+export interface LLMMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+  timestamp?: number;
 }
 
-/**
- * Result of validating provider configuration
- */
-export interface ValidationResult {
-  valid: boolean
-  errors?: string[]
-  warnings?: string[]
+export interface LLMResponse {
+  content: string;
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+  model?: string;
+  finishReason?: 'stop' | 'length' | 'content_filter' | 'error';
+  error?: string;
 }
 
-/**
- * Provider configuration
- */
 export interface ProviderConfig {
-  apiKey: string
-  endpoint?: string
-  modelName: string
+  name: string;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  timeout?: number;
+  [key: string]: unknown;
 }
 
-/**
- * Chat options passed to provider
- */
-export interface ChatOptions {
-  messages: ChatMessage[]
-  systemPrompt?: string
-  tools?: any[]
+export interface Provider {
+  name: string;
+  config: ProviderConfig;
+  chat(messages: LLMMessage[]): Promise<LLMResponse>;
+  complete(prompt: string): Promise<LLMResponse>;
+  isConfigured(): boolean;
 }
 
-/**
- * LLM Provider interface - pluggable provider contract
- * Inspired by hermes-agent's provider-agnostic design
- */
-export interface LLMProvider {
-  /** Unique identifier for this provider */
-  readonly id: string
-  /** Human-readable name */
-  readonly name: string
-  /** Default endpoint if none provided */
-  readonly defaultEndpoint: string
-  /** Default model name */
-  readonly defaultModel: string
+export type ProviderType = 'openai' | 'anthropic' | 'google' | 'azure' | 'custom';
 
-  /**
-   * Send a chat request
-   */
-  chat(options: ChatOptions): Promise<ChatResponse>
-
-  /**
-   * Start a streaming chat
-   */
-  stream(options: StreamOptions): void
-
-  /**
-   * Get provider capabilities
-   */
-  getCapabilities(): ProviderCapabilities
-
-  /**
-   * Validate provider configuration
-   */
-  validateConfig(config: ProviderConfig): ValidationResult
+export interface ProviderInfo {
+  type: ProviderType;
+  name: string;
+  description: string;
+  models: string[];
 }
-
-/**
- * Provider factory function type
- */
-export type ProviderFactory = (config: ProviderConfig) => LLMProvider
-
-/**
- * Built-in provider IDs
- */
-export const BUILT_IN_PROVIDERS = [
-  'openai',
-  'minimax',
-  'glm',
-  'xiaomi',
-  'qwen'
-] as const
-
-export type BuiltInProviderId = typeof BUILT_IN_PROVIDERS[number]
