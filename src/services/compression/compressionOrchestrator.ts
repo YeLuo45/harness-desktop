@@ -1,13 +1,23 @@
 import type { MemoryPointer } from '../../types'
 import type { CompressionLevel, CompressionResult, CompressionConfig } from './types'
-import { LightweightCompressionStrategy } from './strategies/lightweightStrategy'
-import { ModerateCompressionStrategy } from './strategies/moderateStrategy'
-import { AggressiveCompressionStrategy } from './strategies/aggressiveStrategy'
+import { LightweightCompressionStrategy } from './strategies/lightweight'
+import { ModerateCompressionStrategy } from './strategies/moderate'
+import { AggressiveCompressionStrategy } from './strategies/aggressive'
 import { DEFAULT_COMPRESSION_CONFIG, COMPRESSION_THRESHOLDS } from './types'
 
 /**
+ * Compression options for fine-grained control
+ */
+export interface CompressionOptions {
+  /** Force a specific compression level, overriding adaptive selection */
+  level?: CompressionLevel
+  /** Callback when compression completes */
+  onCompressionComplete?: (result: CompressionResult) => void
+}
+
+/**
  * CompressionOrchestrator - selects and executes the appropriate compression strategy
- * based on current token usage
+ * based on current token usage or forced level
  */
 export class CompressionOrchestrator {
   private lightweight = new LightweightCompressionStrategy()
@@ -18,6 +28,10 @@ export class CompressionOrchestrator {
 
   /**
    * Determine the appropriate compression level based on current token count
+   * Uses adaptive thresholds:
+   * - 70-84%: lightweight
+   * - 85-94%: moderate
+   * - 95%+: aggressive
    */
   getCompressionLevel(currentTokens: number): CompressionLevel | null {
     const { maxTokens } = this.config
@@ -35,6 +49,17 @@ export class CompressionOrchestrator {
   }
 
   /**
+   * Get compression level based on token usage percentage (0-100)
+   * More intuitive API for some use cases
+   */
+  getCompressionLevelByUsage(tokenUsagePercent: number): CompressionLevel | null {
+    if (tokenUsagePercent >= 95) return 'aggressive'
+    if (tokenUsagePercent >= 90) return 'moderate'
+    if (tokenUsagePercent >= 80) return 'lightweight'
+    return null
+  }
+
+  /**
    * Check if compression is needed
    */
   needsCompression(currentTokens: number): boolean {
@@ -42,15 +67,52 @@ export class CompressionOrchestrator {
   }
 
   /**
-   * Execute compression with the appropriate strategy
+   * Execute compression with the appropriate strategy or forced level
    */
-  compress(pointers: MemoryPointer[], currentTokens: number): CompressionResult | null {
-    const level = this.getCompressionLevel(currentTokens)
+  compress(pointers: MemoryPointer[], currentTokens: number, options?: CompressionOptions): CompressionResult | null {
+    // Determine compression level
+    let level: CompressionLevel | null = null
+
+    if (options?.level) {
+      // Forced level from options
+      level = options.level
+    } else {
+      // Adaptive selection based on token usage
+      level = this.getCompressionLevel(currentTokens)
+    }
 
     if (!level) {
       return null
     }
 
+    let strategy: { compress: (p: MemoryPointer[], m: number) => CompressionResult; level: CompressionLevel }
+
+    switch (level) {
+      case 'lightweight':
+        strategy = this.lightweight
+        break
+      case 'moderate':
+        strategy = this.moderate
+        break
+      case 'aggressive':
+        strategy = this.aggressive
+        break
+    }
+
+    const result = strategy.compress(pointers, this.config.maxTokens)
+
+    // Call completion callback if provided
+    if (options?.onCompressionComplete) {
+      options.onCompressionComplete(result)
+    }
+
+    return result
+  }
+
+  /**
+   * Execute compression with forced level (backwards compatibility)
+   */
+  compressWithLevel(pointers: MemoryPointer[], level: CompressionLevel): CompressionResult {
     let strategy: { compress: (p: MemoryPointer[], m: number) => CompressionResult; level: CompressionLevel }
 
     switch (level) {
@@ -76,6 +138,14 @@ export class CompressionOrchestrator {
   }
 
   /**
+   * Calculate token usage percentage
+   */
+  getTokenUsagePercent(pointers: MemoryPointer[]): number {
+    const tokens = this.estimateTokenCount(pointers)
+    return (tokens / this.config.maxTokens) * 100
+  }
+
+  /**
    * Check if we should compress and return both level and result
    */
   shouldCompressAndRun(
@@ -91,6 +161,20 @@ export class CompressionOrchestrator {
 
     const result = this.compress(pointers, tokens)
     return { shouldCompress: true, level, result }
+  }
+
+  /**
+   * Get configuration
+   */
+  getConfig(): CompressionConfig {
+    return { ...this.config }
+  }
+
+  /**
+   * Update configuration
+   */
+  updateConfig(config: Partial<CompressionConfig>): void {
+    this.config = { ...this.config, ...config }
   }
 }
 

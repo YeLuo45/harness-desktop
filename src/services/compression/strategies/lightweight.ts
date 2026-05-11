@@ -2,8 +2,11 @@ import type { MemoryPointer } from '../../../types'
 import type { CompressionStrategy, CompressionResult } from '../types'
 
 /**
- * Lightweight compression - merge similar pointers without losing content
- * Triggered at 70% capacity
+ * Lightweight Compression Strategy (Level 1)
+ * 
+ * - Merges similar pointers by type + summary prefix
+ * - Preserves all timestamps
+ * - Target: 30% pointer reduction
  */
 export class LightweightCompressionStrategy implements CompressionStrategy {
   level: 'lightweight' = 'lightweight'
@@ -16,7 +19,7 @@ export class LightweightCompressionStrategy implements CompressionStrategy {
     const originalCount = pointers.length
     const originalTokens = this.estimateTokens(pointers)
 
-    // Group similar pointers by type and summary prefix
+    // Group similar pointers by type and summary prefix (first 50 chars)
     const groups = new Map<string, MemoryPointer[]>()
 
     for (const pointer of pointers) {
@@ -27,27 +30,32 @@ export class LightweightCompressionStrategy implements CompressionStrategy {
       groups.get(key)!.push(pointer)
     }
 
-    // Merge groups that have more than 2 similar pointers
+    // Merge groups with more than 2 similar pointers
     const compressed: MemoryPointer[] = []
-    const merged: string[] = []
 
     for (const [key, group] of groups) {
       if (group.length > 2) {
-        // Keep one pointer with updated summary indicating merge
+        // Keep one pointer with merged summary
         const primary = group[0]
+        const mergedAssociations = group.flatMap(p => p.associations)
+        
+        // Deduplicate associations while preserving order
+        const uniqueAssociations = [...new Set(mergedAssociations)]
+
         compressed.push({
           ...primary,
+          id: `merged-${primary.id}-${Date.now()}`,
           summary: `[Merged ${group.length} ${primary.type} messages] ${primary.summary}`,
-          associations: group.flatMap(p => p.associations)
+          fullContent: `Merged content from ${group.length} ${primary.type} messages:\n${group.map(p => p.fullContent).join('\n---\n')}`,
+          associations: uniqueAssociations
         })
-        merged.push(key)
       } else {
-        // Keep all as-is
+        // Keep all as-is for small groups
         compressed.push(...group)
       }
     }
 
-    // Sort back by timestamp
+    // Sort by timestamp to preserve chronological order
     compressed.sort((a, b) => a.timestamp - b.timestamp)
 
     const compressedTokens = this.estimateTokens(compressed)
@@ -60,6 +68,7 @@ export class LightweightCompressionStrategy implements CompressionStrategy {
       compressedTokens,
       savedTokens: originalTokens - compressedTokens,
       savedRatio: (originalTokens - compressedTokens) / originalTokens,
+      summary: `Lightweight: merged ${originalCount - compressed.length} similar pointers`,
       compressedPointers: compressed
     }
   }
