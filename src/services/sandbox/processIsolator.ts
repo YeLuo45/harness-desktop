@@ -4,6 +4,7 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { AuditEntry, ProcessIsolatorConfig, AuditEventType } from './types';
+import { getPlatformImpl } from '../../../../src/services/platform/platformDetect';
 
 export class ProcessIsolator {
   private config: ProcessIsolatorConfig;
@@ -145,9 +146,17 @@ export class ProcessIsolator {
    * Recursively kill a process and all its children
    */
   private killProcessTree(pid: number, signal: string): void {
+    const platformImpl = getPlatformImpl();
+    const isWindows = platformImpl.path.isWindows ? true : false;
+
     try {
-      // Use pkill to kill all child processes
-      spawn('pkill', ['-9', '-P', pid.toString()], { stdio: 'ignore' });
+      if (isWindows) {
+        // Windows: use taskkill to kill process tree
+        spawn('taskkill', ['/T', '/F', '/PID', pid.toString()], { stdio: 'ignore' });
+      } else {
+        // Unix-like (Linux/macOS): use pkill to kill child processes by parent
+        spawn('pkill', ['-9', '-P', pid.toString()], { stdio: 'ignore' });
+      }
     } catch {
       // Ignore errors
     }

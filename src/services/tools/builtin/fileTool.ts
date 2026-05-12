@@ -6,12 +6,17 @@ import { registerTool } from '../decorators'
 import type { ToolExecutor } from '../types'
 import { getVerificationHooks } from '../../verificationHooks'
 import type { ToolResult } from '../../../types'
-import * as path from 'path'
+import { createPathAdapter } from '../../../../src/services/platform/pathAdapter'
 
 // File system operations using Node.js
 let fs: typeof import('fs') | null = null
 
 // ==================== File System Security Configuration ====================
+
+/**
+ * Get the path adapter for cross-platform path operations
+ */
+const pathAdapter = createPathAdapter()
 
 /**
  * Allowed base directories for file operations (whitelist)
@@ -115,10 +120,15 @@ function getAuditLogs(options?: {
 // ==================== Path Security Checks ====================
 
 /**
+ * Get the path adapter for cross-platform path operations
+ */
+const pathAdapter = platform.path
+
+/**
  * Normalize a path to absolute form and resolve symlinks
  */
 function normalizePath(p: string): string {
-  return path.resolve(p)
+  return pathAdapter.resolve(p)
 }
 
 /**
@@ -127,9 +137,10 @@ function normalizePath(p: string): string {
  */
 function isSensitivePath(targetPath: string): boolean {
   const normalizedTarget = normalizePath(targetPath)
+  const sep = pathAdapter.sep
   
   for (const sensitive of SENSITIVE_PATHS) {
-    const normalizedSensitive = path.resolve(sensitive)
+    const normalizedSensitive = pathAdapter.resolve(sensitive)
     
     // Check exact match
     if (normalizedTarget === normalizedSensitive) {
@@ -137,7 +148,7 @@ function isSensitivePath(targetPath: string): boolean {
     }
     
     // Check if target starts with sensitive path (blocks subdirectories)
-    if (normalizedTarget.startsWith(normalizedSensitive + path.sep)) {
+    if (normalizedTarget.startsWith(normalizedSensitive + sep)) {
       return true
     }
     
@@ -161,12 +172,13 @@ function isSensitivePath(targetPath: string): boolean {
  */
 function isPathInWhitelist(targetPath: string): boolean {
   const normalizedTarget = normalizePath(targetPath)
+  const sep = pathAdapter.sep
   
   for (const allowedDir of ALLOWED_DIRECTORIES) {
-    const normalizedAllowed = path.resolve(allowedDir)
+    const normalizedAllowed = pathAdapter.resolve(allowedDir)
     
     // Check if target path starts with allowed directory
-    if (normalizedTarget.startsWith(normalizedAllowed + path.sep)) {
+    if (normalizedTarget.startsWith(normalizedAllowed + sep)) {
       return true
     }
     

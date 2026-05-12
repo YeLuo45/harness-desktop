@@ -9,9 +9,21 @@ import { registerTool } from '../decorators'
 import type { ToolExecutor } from '../types'
 import { VerificationHooks, getVerificationHooks } from '../../verificationHooks'
 import type { ToolResult } from '../../../types'
+import { getPlatformImpl } from '../../../../src/services/platform/platformDetect'
 
 // Child process module - only available in Node.js environment
 let childProcess: typeof import('child_process') | null = null
+
+// Lazy-loaded shell adapter for cross-platform shell operations
+let shellAdapter: ReturnType<typeof getPlatformImpl>['shell'] | null = null
+
+function getShellAdapter() {
+  if (!shellAdapter) {
+    const platformImpl = getPlatformImpl()
+    shellAdapter = platformImpl.shell
+  }
+  return shellAdapter
+}
 
 async function getChildProcess() {
   if (!childProcess) {
@@ -188,19 +200,12 @@ async function executeInSandbox(
   const { spawn } = cp
   
   return new Promise((resolve) => {
-    const isWindows = process.platform === 'win32'
+    const shell = getShellAdapter()
+    const shellInfo = shell.getShell()
+    const isWindows = shellInfo.isWindows
+    const shellPath = shell.getShellPath()
+    const shellArgs = shell.translateCommand ? [shell.translateCommand(command)] : ['-c', command]
     
-    let shell: string
-    let shellArgs: string[]
-
-    if (isWindows) {
-      shell = 'cmd.exe'
-      shellArgs = ['/c', command]
-    } else {
-      shell = '/bin/sh'
-      shellArgs = ['-c', command]
-    }
-
     // Restricted environment
     const env = {
       ...process.env,
@@ -211,7 +216,7 @@ async function executeInSandbox(
         : '/usr/bin:/bin:/usr/local/bin',
     }
 
-    const proc = spawn(shell, shellArgs, {
+    const proc = spawn(shellPath, shellArgs, {
       cwd: config.workDir,
       env,
       timeout: timeoutMs,
@@ -277,21 +282,15 @@ async function executeDirect(
   }
 
   return new Promise((resolve) => {
-    const isWindows = process.platform === 'win32'
-    let shell: string
-    let shellArgs: string[]
-
-    if (isWindows) {
-      shell = 'cmd.exe'
-      shellArgs = ['/c', command]
-    } else {
-      shell = '/bin/sh'
-      shellArgs = ['-c', command]
-    }
+    const shell = getShellAdapter()
+    const shellInfo = shell.getShell()
+    const isWindows = shellInfo.isWindows
+    const shellPath = shell.getShellPath()
+    const shellArgs = shell.translateCommand ? [shell.translateCommand(command)] : ['-c', command]
 
     const { spawn } = cp
     
-    const proc = spawn(shell, shellArgs, {
+    const proc = spawn(shellPath, shellArgs, {
       cwd: process.env.HOME || '/tmp',
       env: {
         ...process.env,
@@ -401,7 +400,9 @@ class BashExecuteExecutor implements ToolExecutor {
     const toolName = 'bash_execute'
 
     // Determine if command is dangerous and requires sandbox
-    const isDangerous = isDangerousCommand(command) || containsDangerousPattern(command)
+    const shell = getShellAdapter()
+    const dangerousCheck = shell.isDangerousCommand(command)
+    const isDangerous = !!dangerousCheck || containsDangerousPattern(command)
     const isRisky = isRiskyCommand(command)
     const useSandbox = isDangerous || isRisky
 

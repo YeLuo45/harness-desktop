@@ -1,19 +1,106 @@
 /**
- * P8: Multi-Platform Adaptation - Platform Module
+ * Platform Service - Cross-Platform Abstraction Layer
  * 
- * Export all platform-related types and utilities.
+ * Provides unified interfaces for path, process, and shell operations
+ * across Windows, Linux, and macOS.
+ * 
+ * @example
+ * ```typescript
+ * import platform from './services/platform';
+ * 
+ * // Get platform info
+ * const info = platform.getPlatformInfo();
+ * console.log(`Running on ${info.platform} (${info.arch})`);
+ * 
+ * // Use path adapter
+ * const nativePath = platform.path.toNativePath('/usr/local/bin');
+ * 
+ * // Use process adapter
+ * const cwd = platform.process.cwd();
+ * 
+ * // Use shell adapter
+ * const shell = platform.shell.getShell();
+ * ```
  */
 
-export { 
-  type PlatformType, 
-  type PlatformAdapter, 
-  type PlatformCapabilities,
-  type PlatformInfo,
-  type WebSocketAdapter,
-  DEFAULT_CAPABILITIES 
-} from './types'
+export {
+  Platform,
+  Arch,
+  PlatformInfo,
+  IPathAdapter,
+  IProcessAdapter,
+  IShellAdapter,
+  ShellType,
+  ShellInfo,
+  DangerousCommand,
+  IPlatformImpl,
+} from './types';
 
-export { platformManager, getPlatform, getCapabilities, supports, isDesktop, isMobile, getPlatformInfo } from './platformManager'
+export {
+  detect,
+  getArch,
+  isWindows,
+  isLinux,
+  isMacOS,
+  is64Bit,
+  getPlatformInfo,
+  getPlatformImpl,
+} from './platformDetect';
 
-export { ElectronPlatformAdapter } from './adapters/electronAdapter'
-export { WebPlatformAdapter } from './adapters/webAdapter'
+export { createPathAdapter } from './pathAdapter';
+export { createProcessAdapter } from './processAdapter';
+export { createShellAdapter, DANGEROUS_COMMANDS } from './shellAdapter';
+
+import { getPlatformInfo, getPlatformImpl } from './platformDetect';
+import { createPathAdapter } from './pathAdapter';
+import { createProcessAdapter } from './processAdapter';
+import { createShellAdapter } from './shellAdapter';
+
+// Lazy-loaded singleton instances
+let _pathAdapter: ReturnType<typeof createPathAdapter> | null = null;
+let _processAdapter: ReturnType<typeof createProcessAdapter> | null = null;
+let _shellAdapter: ReturnType<typeof createShellAdapter> | null = null;
+
+const platformService = {
+  /**
+   * Get comprehensive platform information
+   */
+  getPlatformInfo,
+
+  /**
+   * Get platform implementation (lazy-loaded)
+   */
+  getPlatformImpl,
+
+  /**
+   * Get the path adapter instance (singleton)
+   */
+  get path() {
+    if (!_pathAdapter) {
+      _pathAdapter = createPathAdapter();
+    }
+    return _pathAdapter;
+  },
+
+  /**
+   * Get the process adapter instance (singleton)
+   */
+  get process() {
+    if (!_processAdapter) {
+      _processAdapter = createProcessAdapter();
+    }
+    return _processAdapter;
+  },
+
+  /**
+   * Get the shell adapter instance (singleton)
+   */
+  get shell() {
+    if (!_shellAdapter) {
+      _shellAdapter = createShellAdapter();
+    }
+    return _shellAdapter;
+  },
+};
+
+export default platformService;
