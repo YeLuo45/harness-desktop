@@ -1,8 +1,10 @@
 import { v4 as uuidv4 } from 'uuid'
-import type { SubAgent, SubTask, SubTaskResult, SubAgentResult, KVCacheSnapshot, ToolCall, ToolResult, MemoryPointer } from '../types'
+import type { SubAgent, SubTask, SubTaskResult, SubAgentResult, KVCacheSnapshot, ToolCall, ToolResult, MemoryPointer, AgentRole } from '../types'
 import { getToolRegistry, type ToolRegistry } from './tools'
 import { getDelegationStore, type DelegationStore } from './persistence'
 import type { DelegationState } from './persistence/types'
+import { Orchestrator, orchestrator, type ExecutionPlan, type ExecutionStep } from './multiAgent/orchestrator'
+import { ResultAggregator, resultAggregator } from './multiAgent/resultAggregator'
 
 interface SubAgentManagerOptions {
   maxConcurrentAgents?: number
@@ -10,6 +12,8 @@ interface SubAgentManagerOptions {
   onTaskComplete?: (agentId: string, task: SubTask) => void
   onAgentComplete?: (result: SubAgentResult) => void
   delegationStore?: DelegationStore
+  enableOrchestration?: boolean
+  aggregationStrategy?: 'sequential' | 'hierarchical' | 'consensus' | 'vote'
 }
 
 interface TaskQueueItem {
@@ -27,6 +31,14 @@ export class SubAgentManager {
   private onAgentComplete?: (result: SubAgentResult) => void
   private delegationStore: DelegationStore
 
+  // Orchestrator integration for multi-agent collaboration
+  private orchestrator: Orchestrator
+  private resultAggregator: ResultAggregator
+  private enableOrchestration: boolean
+  private aggregationStrategy: 'sequential' | 'hierarchical' | 'consensus' | 'vote'
+  private executionPlans: Map<string, ExecutionPlan> = new Map() // sessionId -> plan
+  private completedSteps: Map<string, Set<string>> = new Map() // sessionId -> completed stepIds
+
   // Tool executor callback - will be set by the app
   private toolExecutor: ((toolName: string, args: Record<string, unknown>) => Promise<ToolResult>) | null = null
 
@@ -36,6 +48,10 @@ export class SubAgentManager {
     this.onTaskComplete = options.onTaskComplete
     this.onAgentComplete = options.onAgentComplete
     this.delegationStore = options.delegationStore || getDelegationStore()
+    this.enableOrchestration = options.enableOrchestration ?? true
+    this.aggregationStrategy = options.aggregationStrategy || 'sequential'
+    this.orchestrator = orchestrator
+    this.resultAggregator = resultAggregator
   }
 
   /**
@@ -651,6 +667,309 @@ export class SubAgentManager {
       pendingTasks,
       runningTasks,
       completedTasks
+    }
+  }
+
+  // ========== Orchestrator Integration Methods ==========
+
+  /**
+   * Create an orchestration plan for multi-agent collaboration
+   */
+  createOrchestrationPlan(orchestratorAgentId: string): ExecutionPlan | null {
+    if (!this.enableOrchestration) return null
+
+    const orchestratorAgent = this.agents.get(orchestratorAgentId)
+    if (!orchestratorAgent) return null
+
+    // Get all child agents (workers)
+    const childAgents = Array.from(this.agents.values()).filter(
+      a => a.parentId === orchestratorAgentId && a.status !== 'cancelled'
+    )
+
+    // Get all tasks from orchestrator and child agents
+    const allTasks = [...orchestratorAgent.tasks]
+    for (const agent of childAgents) {
+      allTasks.push(...agent.tasks)
+    }
+
+    if (allTasks.length === 0) return null
+
+    // Create a mock collaboration session for the orchestrator
+    const agentsMap = new Map<string, any>()
+    agentsMap.set(orchestratorAgentId, { id: orchestratorAgentId, config: { role: 'orchestrator' } })
+    for (const agent of childAgents) {
+      agentsMap.set(agent.id, { id: agent.id, config: { role: 'orchestrator' } })
+    }
+
+    const mockSession = {
+      id: orchestratorAgentId,
+      name: orchestratorAgent.name,
+      agents: agentsMap,
+      tasks: allTasks.map(t => ({
+        id: t.id,
+        description: t.description,
+        dependencies: t.dependencies,
+        status: t.status
+      }))
+    }
+
+    // Create execution plan using Orchestrator
+    const plan = this.orchestrator.createExecutionPlan(mockSession as any)
+    this.executionPlans.set(orchestratorAgentId, plan)
+    this.completedSteps.set(orchestratorAgentId, new Set())
+
+    return plan
+  }
+
+  /**
+   * Get next executable steps from an orchestration plan
+   */
+  getNextExecutableSteps(orchestratorAgentId: string): ExecutionStep[] {
+    const plan = this.executionPlans.get(orchestratorAgentId)
+    const completed = this.completedSteps.get(orchestratorAgentId)
+
+    if (!plan || !completed) return []
+
+    return this.orchestrator.getNextExecutableSteps(plan, completed)
+  }
+
+  /**
+   * Mark a step as completed in the orchestration plan
+   */
+  markStepCompleted(orchestratorAgentId: string, stepId: string): void {
+    const completed = this.completedSteps.get(orchestratorAgentId)
+    if (completed) {
+      completed.add(stepId)
+    }
+  }
+
+  /**
+   * Execute all agents with orchestration support
+   * Uses the Orchestrator to determine parallel execution groups
+   */
+  async runWithOrchestration(orchestratorAgentId: string): Promise<SubAgentResult> {
+    const orchestratorAgent = this.agents.get(orchestratorAgentId)
+    if (!orchestratorAgent) {
+      return {
+        agentId: orchestratorAgentId,
+        success: false,
+        tasks: [],
+        aggregatedOutput: '',
+        error: 'Orchestrator agent not found'
+      }
+    }
+
+    // Create orchestration plan if not exists
+    let plan = this.executionPlans.get(orchestratorAgentId)
+    if (!plan) {
+      plan = this.createOrchestrationPlan(orchestratorAgentId)
+    }
+
+    if (!plan) {
+      // Fallback to regular execution
+      return this.runAgent(orchestratorAgentId)
+    }
+
+    orchestratorAgent.status = 'running'
+    this.saveDelegation(orchestratorAgentId).catch(err => {
+      console.warn(`[SubAgentManager] Failed to save delegation:`, err)
+    })
+
+    const allTaskResults: SubTaskResult[] = []
+    const completed = this.completedSteps.get(orchestratorAgentId) || new Set()
+    const planSteps = plan.steps
+
+    // Execute steps in parallel groups according to plan
+    for (const step of planSteps) {
+      // Wait for dependencies
+      if (step.waitFor && step.waitFor.length > 0) {
+        const depsCompleted = step.waitFor.every(depId => completed.has(depId))
+        if (!depsCompleted) {
+          // Skip this step for now - dependencies not met
+          continue
+        }
+      }
+
+      // Execute the step
+      const task = this.findTaskById(step.taskId)
+      if (!task) continue
+
+      const agentId = step.agentId
+      const taskResult = await this.executeTask(agentId, task.id)
+      allTaskResults.push(taskResult)
+      completed.add(step.stepId)
+
+      // Update orchestrator's KV cache with task result
+      if (taskResult.toolResults) {
+        this.updateKVCache(orchestratorAgentId, taskResult.toolResults.map(r => ({
+          id: uuidv4(),
+          type: 'tool_result' as const,
+          summary: `Result from ${agentId}: ${r.success ? 'success' : 'failed'}`,
+          fullContent: JSON.stringify(r),
+          timestamp: Date.now(),
+          associations: []
+        })))
+      }
+    }
+
+    // Determine overall success
+    const allSucceeded = allTaskResults.every(t => t.success)
+
+    // Aggregate outputs using the configured strategy
+    const outputs = allTaskResults
+      .filter(t => t.output)
+      .map(t => ({
+        agentId: orchestratorAgentId,
+        role: 'orchestrator' as AgentRole,
+        success: t.success || false,
+        content: t.output,
+        metadata: { error: t.error }
+      }))
+
+    const aggregationResult = this.resultAggregator.aggregate(outputs, {
+      strategy: this.aggregationStrategy
+    })
+
+    orchestratorAgent.status = allSucceeded ? 'completed' : 'failed'
+    orchestratorAgent.completedAt = Date.now()
+
+    this.saveDelegation(orchestratorAgentId).catch(err => {
+      console.warn(`[SubAgentManager] Failed to save delegation:`, err)
+    })
+
+    const result: SubAgentResult = {
+      agentId: orchestratorAgentId,
+      success: allSucceeded,
+      tasks: allTaskResults,
+      aggregatedOutput: aggregationResult.finalOutput,
+      kvCacheSnapshot: this.getKVCacheSnapshot(orchestratorAgentId)!
+    }
+
+    if (this.onAgentComplete) {
+      this.onAgentComplete(result)
+    }
+
+    return result
+  }
+
+  /**
+   * Aggregate results from multiple agents using the configured strategy
+   */
+  aggregateResults(agentIds: string[]): {
+    success: boolean
+    aggregatedOutput: string
+    summary: string
+    metadata: Record<string, unknown>
+  } {
+    const outputs = agentIds
+      .map(id => this.agents.get(id))
+      .filter((agent): agent is SubAgent => agent !== undefined)
+      .flatMap(agent =>
+        agent.tasks
+          .filter(t => t.result)
+          .map(t => ({
+            agentId: agent.id,
+            role: 'orchestrator' as AgentRole,
+            success: t.result!.success,
+            content: t.result!.output,
+            metadata: { error: t.result!.error }
+          }))
+      )
+
+    const result = this.resultAggregator.aggregate(outputs, {
+      strategy: this.aggregationStrategy
+    })
+
+    return {
+      success: result.metadata.failedOutputs === 0,
+      aggregatedOutput: result.finalOutput,
+      summary: result.summary,
+      metadata: result.metadata
+    }
+  }
+
+  /**
+   * Distribute tasks to child agents based on role
+   */
+  distributeTasks(orchestratorAgentId: string, tasks: Array<{
+    description: string
+    toolCalls: ToolCall[]
+    dependencies?: string[]
+    assignedRole?: AgentRole
+  }>): string[] {
+    const orchestratorAgent = this.agents.get(orchestratorAgentId)
+    if (!orchestratorAgent) return []
+
+    const childAgents = Array.from(this.agents.values()).filter(
+      a => a.parentId === orchestratorAgentId && a.status !== 'cancelled'
+    )
+
+    if (childAgents.length === 0) {
+      // No child agents, add to orchestrator directly
+      const createdTasks = this.addTasks(orchestratorAgentId, tasks)
+      return createdTasks.map(t => t.id)
+    }
+
+    // Group agents by role
+    const agentsByRole = new Map<AgentRole, SubAgent[]>()
+    for (const agent of childAgents) {
+      const role = (agent as any).role || 'orchestrator'
+      const existing = agentsByRole.get(role) || []
+      existing.push(agent)
+      agentsByRole.set(role, existing)
+    }
+
+    const createdTaskIds: string[] = []
+
+    for (const taskSpec of tasks) {
+      const role = taskSpec.assignedRole || 'orchestrator'
+      const availableAgents = agentsByRole.get(role) || agentsByRole.get('orchestrator') || []
+
+      if (availableAgents.length === 0) {
+        // No suitable agent, add to orchestrator
+        const createdTasks = this.addTasks(orchestratorAgentId, [taskSpec])
+        createdTaskIds.push(...createdTasks.map(t => t.id))
+        continue
+      }
+
+      // Pick agent with fewest tasks
+      const selectedAgent = availableAgents.reduce((min, agent) =>
+        agent.tasks.length < min.tasks.length ? agent : min
+      )
+
+      const createdTasks = this.addTasks(selectedAgent.id, [taskSpec])
+      createdTaskIds.push(...createdTasks.map(t => t.id))
+    }
+
+    return createdTaskIds
+  }
+
+  /**
+   * Get execution plan for an orchestrator
+   */
+  getExecutionPlan(orchestratorAgentId: string): ExecutionPlan | undefined {
+    return this.executionPlans.get(orchestratorAgentId)
+  }
+
+  /**
+   * Get orchestration metadata
+   */
+  getOrchestrationMetadata(orchestratorAgentId: string): {
+    totalSteps: number
+    completedSteps: number
+    pendingSteps: number
+    parallelGroups: string[][]
+  } | null {
+    const plan = this.executionPlans.get(orchestratorAgentId)
+    const completed = this.completedSteps.get(orchestratorAgentId)
+
+    if (!plan) return null
+
+    return {
+      totalSteps: plan.steps.length,
+      completedSteps: completed?.size || 0,
+      pendingSteps: plan.steps.length - (completed?.size || 0),
+      parallelGroups: plan.parallelGroups || []
     }
   }
 }
