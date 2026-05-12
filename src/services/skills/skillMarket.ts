@@ -1,130 +1,59 @@
 /**
- * P10: Skill System - Skill Market
- * 
- * Import/export/share skills as JSON.
+ * Skill Market - Discover, install, and uninstall skills from marketplace
  */
 
-import type { SkillTemplate } from './types'
+import { MarketListing, InstallResult, SkillManifest } from './types';
+import { registry } from './skillRegistry';
 
-const MARKET_VERSION = '1.0.0'
+export class SkillMarket {
+  private listings: Map<string, MarketListing> = new Map();
 
-export interface SkillMarket {
-  exportSkill(skillId: string): string
-  exportAllSkills(): string
-  importSkill(json: string): SkillTemplate
-  importSkills(json: string): SkillTemplate[]
-  validateSkillSchema(obj: unknown): boolean
-}
-
-interface SkillExportFormat {
-  version: string
-  exportedAt: number
-  skills: SkillTemplate[]
-}
-
-function isSkillTemplate(obj: unknown): obj is SkillTemplate {
-  if (typeof obj !== 'object' || obj === null) return false
-  
-  const skill = obj as Record<string, unknown>
-  return (
-    typeof skill.id === 'string' &&
-    typeof skill.name === 'string' &&
-    typeof skill.description === 'string' &&
-    typeof skill.category === 'string' &&
-    typeof skill.template === 'string' &&
-    Array.isArray(skill.variables) &&
-    typeof skill.version === 'string' &&
-    Array.isArray(skill.tags)
-  )
-}
-
-export class SkillMarketImpl implements SkillMarket {
-  constructor(
-    private getSkill: (id: string) => SkillTemplate | undefined,
-    private listSkills: () => SkillTemplate[]
-  ) {}
-
-  exportSkill(skillId: string): string {
-    const skill = this.getSkill(skillId)
-    if (!skill) {
-      throw new Error(`Skill not found: ${skillId}`)
-    }
-
-    const exportData: SkillExportFormat = {
-      version: MARKET_VERSION,
-      exportedAt: Date.now(),
-      skills: [skill]
-    }
-
-    return JSON.stringify(exportData, null, 2)
-  }
-
-  exportAllSkills(): string {
-    const exportData: SkillExportFormat = {
-      version: MARKET_VERSION,
-      exportedAt: Date.now(),
-      skills: this.listSkills()
-    }
-
-    return JSON.stringify(exportData, null, 2)
-  }
-
-  importSkill(json: string): SkillTemplate {
-    const skills = this.importSkills(json)
-    if (skills.length === 0) {
-      throw new Error('No valid skill found in JSON')
-    }
-    return skills[0]
-  }
-
-  importSkills(json: string): SkillTemplate[] {
-    let parsed: SkillExportFormat
-
-    try {
-      parsed = JSON.parse(json)
-    } catch {
-      throw new Error('Invalid JSON format')
-    }
-
-    if (!parsed.version || !Array.isArray(parsed.skills)) {
-      throw new Error('Invalid skill market format: missing version or skills array')
-    }
-
-    const validSkills: SkillTemplate[] = []
-
-    for (const skill of parsed.skills) {
-      if (this.validateSkillSchema(skill)) {
-        // Generate new ID for imported skill to avoid conflicts
-        const importedSkill: SkillTemplate = {
-          ...skill,
-          id: `imported_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-          isBuiltIn: false,
-          useCount: 0,
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        }
-        validSkills.push(importedSkill)
+  async discover(query?: string): Promise<MarketListing[]> {
+    const results: MarketListing[] = [];
+    for (const listing of this.listings.values()) {
+      if (!query) {
+        results.push(listing);
+        continue;
+      }
+      const q = query.toLowerCase();
+      if (
+        listing.manifest.name.toLowerCase().includes(q) ||
+        listing.manifest.description.toLowerCase().includes(q) ||
+        listing.manifest.tags?.some((t) => t.toLowerCase().includes(q))
+      ) {
+        results.push(listing);
       }
     }
-
-    return validSkills
+    return results;
   }
 
-  validateSkillSchema(obj: unknown): boolean {
-    return isSkillTemplate(obj)
+  async install(manifest: SkillManifest): Promise<InstallResult> {
+    try {
+      const instanceId = registry.register(manifest);
+      return { success: true, instanceId };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async uninstall(instanceId: string): Promise<boolean> {
+    return registry.remove(instanceId);
+  }
+
+  async getListing(skillId: string): Promise<MarketListing | undefined> {
+    return this.listings.get(skillId);
+  }
+
+  addListing(listing: MarketListing): void {
+    this.listings.set(listing.manifest.id, listing);
+  }
+
+  removeListing(skillId: string): boolean {
+    return this.listings.delete(skillId);
   }
 }
 
-// Factory function to create SkillMarket instance
-export function createSkillMarket(
-  getSkill: (id: string) => SkillTemplate | undefined,
-  listSkills: () => SkillTemplate[]
-): SkillMarket {
-  return new SkillMarketImpl(getSkill, listSkills)
-}
-
-export const skillMarket = {
-  validateSkillSchema(obj: unknown): boolean {
-    return isSkillTemplate(obj)
-  }
-}
+export const market = new SkillMarket();

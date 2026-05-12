@@ -1,23 +1,17 @@
 /**
- * P10: Skill System - Skills Module
- * 
- * Export all skill types and utilities.
+ * Skill System - Unified Export
  */
 
-export {
-  type SkillTemplate,
-  type SkillVariable,
-  type SkillExecution,
-  type SkillRegistry,
-  type SkillSearchQuery,
-  type RenderOptions,
-  type SkillCategory,
-  type SkillVersion,
-  type SkillChain,
-  type ChainResult,
-  BUILT_IN_SKILLS
-} from './types'
+// Types
+export * from './types';
 
-export { SkillManager, skillManager } from './skillManager'
-export { SkillMarket, skillMarket, createSkillMarket } from './skillMarket'
-export { SkillChainExecutor, createSkillChainExecutor, createSkillChain, type SkillChainResult } from './skillChain'
+// Core components
+export { SkillRegistry, registry } from './skillRegistry';
+export { SkillRunner, runner } from './skillRunner';
+export { SkillSync, sync } from './skillSync';
+export { SkillMarket, market } from './skillMarket';
+
+// Built-in skills
+export { fileOpsManifest } from './builtin/fileOps';
+export { webSearchManifest, type SearchResult } from './builtin/webSearch';
+export { codeGenManifest, type CodeGenOptions } from './builtin/codeGen';
