@@ -146,6 +146,16 @@ export function registerLogIPC(ipcMain: any) {
   ipcMain.handle('log:getBuffer', () => {
     return [...logBuffer].slice(-20);
   });
+
+  ipcMain.handle('log:append', (_, entry: { level: string; module: string; message: string }) => {
+    addToBuffer({
+      timestamp: new Date().toISOString(),
+      level: entry.level || 'info',
+      module: entry.module || 'renderer',
+      message: entry.message,
+    });
+    return true;
+  });
 }
 
 export { log };

@@ -1,12 +1,7 @@
 // Compression types and interfaces
 export * from './types'
 
-// Compression strategies (original implementations)
-export * from './strategies/lightweightStrategy'
-export * from './strategies/moderateStrategy'
-export * from './strategies/aggressiveStrategy'
-
-// New strategy implementations
+// Strategy implementations
 export { LightweightCompressionStrategy } from './strategies/lightweight'
 export { ModerateCompressionStrategy } from './strategies/moderate'
 export { AggressiveCompressionStrategy } from './strategies/aggressive'

@@ -2,7 +2,25 @@ import { V2_TOOLS } from './modelAdapters'
 import type { ChatMessage, ToolDefinition, ExecutionPlan, PlanStep } from '../types'
 import { v4 as uuidv4 } from 'uuid'
 import { getToolRegistry } from './tools'
-import { getProviderRegistry } from './providers'
+import { providerManager } from './providers'
+import { OpenAIProvider } from './providers/openaiProvider'
+
+// Renderer-side logger: forwards to electron-log via IPC
+function rendererLog(level: 'info' | 'warn' | 'error', module: string, message: string, data?: Record<string, unknown>) {
+  const payload = data ? `${message} ${JSON.stringify(data)}` : message
+  if (level === 'error') {
+    console.error(`[${module}]`, payload)
+  } else if (level === 'warn') {
+    console.warn(`[${module}]`, payload)
+  } else {
+    console.log(`[${module}]`, payload)
+  }
+  // Bridge to electron-log buffer via IPC if available
+  const electronAPI = (window as any).electronAPI
+  if (electronAPI?.log?.append) {
+    electronAPI.log.append({ level, module, message: payload }).catch(() => {})
+  }
+}
 
 interface LLMStreamCallbacks {
   onChunk: (chunk: string) => void
@@ -15,8 +33,8 @@ export class LLMBridge {
   private systemPrompt: string = ''
 
   constructor(_provider: string, _apiKey: string, _endpoint: string, _modelName: string) {
-    // Provider configuration is now handled by ProviderRegistry
-    // The LLMBridge now delegates to the active provider via getProvider()
+    // Provider is registered externally via initLLMBridge
+    rendererLog('info', 'LLMBridge', 'LLMBridge constructed', { _provider, _endpoint, _modelName })
   }
 
   setSystemPrompt(prompt: string) {
@@ -44,22 +62,42 @@ export class LLMBridge {
       return this.streamChat(messages, streamCallbacks)
     }
 
+    rendererLog('info', 'LLMBridge', 'chat() called — non-streaming', { messageCount: messages.length })
+
     const tools = this.getTools()
-    const provider = getProviderRegistry().getActive()
+    const provider = providerManager.getCurrentProvider()
 
     if (!provider) {
-      throw new Error('No active LLM provider configured. Please set up a provider first.')
+      const err = 'No active LLM provider configured. Please set up a provider first.'
+      rendererLog('error', 'LLMBridge', err)
+      throw new Error(err)
     }
 
-    const response = await provider.chat({
-      messages,
-      systemPrompt: this.systemPrompt,
-      tools
+    rendererLog('info', 'LLMBridge', 'Calling provider.chat()', {
+      provider: provider.name,
+      toolCount: tools.length
     })
 
-    return {
-      content: response.content,
-      toolCalls: response.toolCalls || []
+    const start = Date.now()
+    try {
+      const response = await provider.chat(messages)
+      rendererLog('info', 'LLMBridge', `provider.chat() done in ${Date.now() - start}ms`, {
+        contentLength: response.content.length,
+        hasError: !!response.error,
+        finishReason: response.finishReason
+      })
+
+      if (response.error) {
+        rendererLog('error', 'LLMBridge', 'Provider returned error', { error: response.error })
+      }
+
+      return {
+        content: response.content,
+        toolCalls: (response as any).toolCalls || []
+      }
+    } catch (err: any) {
+      rendererLog('error', 'LLMBridge', 'provider.chat() threw', { error: err.message })
+      throw err
     }
   }
 
@@ -70,17 +108,21 @@ export class LLMBridge {
     let fullContent = ''
     const tools = this.getTools()
 
+    rendererLog('info', 'LLMBridge', 'streamChat() called', { messageCount: messages.length })
+
     return new Promise((resolve) => {
-      const provider = getProviderRegistry().getActive()
+      const provider = providerManager.getCurrentProvider()
 
       if (!provider) {
-        callbacks.onError(new Error('No active LLM provider configured. Please set up a provider first.'))
-        resolve({
-          content: fullContent,
-          toolCalls: []
-        })
+        const errMsg = 'No active LLM provider configured. Please set up a provider first.'
+        rendererLog('error', 'LLMBridge', errMsg)
+        callbacks.onError(new Error(errMsg))
+        resolve({ content: fullContent, toolCalls: [] })
         return
       }
+
+      rendererLog('info', 'LLMBridge', 'Calling provider.stream()', { provider: provider.name })
+      const start = Date.now()
 
       provider.stream({
         messages,
@@ -91,6 +133,9 @@ export class LLMBridge {
           callbacks.onChunk(chunk)
         },
         onComplete: () => {
+          rendererLog('info', 'LLMBridge', `stream complete in ${Date.now() - start}ms`, {
+            totalLength: fullContent.length
+          })
           callbacks.onComplete()
           resolve({
             content: fullContent,
@@ -98,6 +143,7 @@ export class LLMBridge {
           })
         },
         onError: (error) => {
+          rendererLog('error', 'LLMBridge', 'stream error', { error: error.message })
           callbacks.onError(error)
           resolve({
             content: fullContent,
@@ -112,9 +158,6 @@ export class LLMBridge {
   async shouldUsePlanningMode(messages: ChatMessage[]): Promise<boolean> {
     const lastMessage = messages[messages.length - 1]?.content || ''
 
-    // Heuristics for planning mode:
-    // 1. Message contains planning keywords
-    // 2. Message is long and complex
     const planningKeywords = ['refactor', 'restructure', 'rebuild', 'migrate', 'implement', 'create a', 'build a', 'set up a', '重构', '重塑', '重建', '迁移']
     const isLongTask = lastMessage.length > 500
 
@@ -127,7 +170,6 @@ export class LLMBridge {
 
   // Generate execution plan from messages
   async generatePlan(messages: ChatMessage[]): Promise<ExecutionPlan> {
-    // Create a plan generation prompt
     const planPrompt = `${this.systemPrompt}
 
 ## Task: Generate Execution Plan
@@ -154,19 +196,18 @@ Only use the following tools: file_read, file_write, file_append, dir_list, bash
 Do not include tool_status in the plan.
 `
 
-    const provider = getProviderRegistry().getActive()
+    const provider = providerManager.getCurrentProvider()
 
     if (!provider) {
       throw new Error('No active LLM provider configured. Please set up a provider first.')
     }
 
-    const response = await provider.chat({
-      messages: [...messages.slice(0, -1), { role: 'user' as const, content: planPrompt }],
-      systemPrompt: ''
-    })
+    const response = await provider.chat([
+      ...messages.slice(0, -1),
+      { role: 'user' as const, content: planPrompt }
+    ])
 
     try {
-      // Try to parse the response as JSON
       const planData = JSON.parse(response.content)
 
       const steps: PlanStep[] = (planData.steps || []).map((s: any, idx: number) => ({
@@ -187,7 +228,6 @@ Do not include tool_status in the plan.
         confirmed: false
       }
     } catch {
-      // If parsing fails, create a simple plan
       return {
         taskDescription: 'User request',
         steps: [{
@@ -215,6 +255,23 @@ export function getLLMBridge(): LLMBridge | null {
 }
 
 export function initLLMBridge(provider: string, apiKey: string, endpoint: string, modelName: string): LLMBridge {
+  rendererLog('info', 'LLMBridge', 'initLLMBridge()', { provider, endpoint, modelName })
+
+  // Create OpenAI provider and register with providerManager
+  const openaiProvider = new OpenAIProvider({
+    name: 'openai',
+    baseUrl: endpoint || 'https://api.openai.com/v1',
+    apiKey,
+    model: modelName || 'gpt-4o'
+  })
+
+  providerManager.register(openaiProvider)
+  rendererLog('info', 'LLMBridge', 'Provider registered', {
+    name: openaiProvider.name,
+    baseUrl: openaiProvider.config.baseUrl,
+    model: openaiProvider.config.model
+  })
+
   bridgeInstance = new LLMBridge(provider, apiKey, endpoint, modelName)
   return bridgeInstance
 }

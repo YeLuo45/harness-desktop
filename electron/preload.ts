@@ -60,5 +60,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     export: () => ipcRenderer.invoke('log:export'),
     clear: () => ipcRenderer.invoke('log:clear'),
     getBuffer: () => ipcRenderer.invoke('log:getBuffer'),
+    append: (entry: { level: string; module: string; message: string }) =>
+      ipcRenderer.invoke('log:append', entry),
   }
 })

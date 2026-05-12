@@ -3,7 +3,7 @@
  */
 
 // Types
-export {
+export type {
   SandboxConfig,
   SandboxResult,
   AuditEntry,
