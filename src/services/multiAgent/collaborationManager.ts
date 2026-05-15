@@ -493,22 +493,19 @@ export class CollaborationManager {
     const completed = new Set<string>()
 
     try {
-      // Execute steps according to plan
-      for (const step of plan.steps) {
-        // Wait for dependencies
-        if (step.waitFor) {
-          for (const depId of step.waitFor) {
-            while (!completed.has(depId)) {
-              // In real implementation, this would wait for the step to complete
-              // For now, we simulate completion
-              await new Promise(resolve => setTimeout(resolve, 10))
-            }
-          }
-        }
+      // Execute parallel groups
+      const groups = plan.parallelGroups || [plan.steps.map(s => s.stepId)]
 
-        // Execute step
-        await this.executeStep(session, step)
-        completed.add(step.stepId)
+      for (const groupStepIds of groups) {
+        // Execute all steps in this group concurrently
+        const groupSteps = plan.steps.filter(s => groupStepIds.includes(s.stepId))
+        
+        await Promise.all(
+          groupSteps.map(async (step) => {
+            await this.executeStep(session, step)
+            completed.add(step.stepId)
+          })
+        )
       }
 
       session.status = 'completed'
@@ -543,13 +540,23 @@ export class CollaborationManager {
     }
 
     try {
-      // Simulate task execution
-      const result: AgentOutput = {
-        agentId: step.agentId,
-        role: agent?.config.role || 'orchestrator',
-        success: true,
-        content: `Executed: ${task.description}`,
-        metadata: { stepId: step.stepId, taskId: step.taskId, executedAt: Date.now() }
+      let result: AgentOutput
+
+      if (this.subAgentManager && agent) {
+        // Real execution via SubAgentManager
+        const subAgent = this.subAgentManager.createAgent(`collab-step-${step.stepId}`)
+        this.subAgentManager.addTask(subAgent.id, task.description, [], step.waitFor || [])
+        const subResult = await this.subAgentManager.runAgent(subAgent.id)
+        result = subAgentResultToAgentOutput(subResult, step.taskId)
+      } else {
+        // Fallback mock execution
+        result = {
+          agentId: step.agentId,
+          role: agent?.config.role || 'orchestrator',
+          success: true,
+          content: `Executed: ${task.description}`,
+          metadata: { stepId: step.stepId, taskId: step.taskId, executedAt: Date.now() }
+        }
       }
 
       task.result = result
