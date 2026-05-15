@@ -29,3 +29,6 @@ export type { PlanMetadata } from './orchestrator'
 // Result Aggregator
 export { ResultAggregator, resultAggregator, type AggregationConfig } from './resultAggregator'
 export type { ConflictResolution } from './resultAggregator'
+
+// Agent Adapter
+export { subAgentResultToAgentOutput, collaborationTaskToSubTasks, extractTaskDescriptions } from './agentAdapter'

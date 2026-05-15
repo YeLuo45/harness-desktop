@@ -20,6 +20,8 @@ import { BUILT_IN_AGENTS, CollaborationStatus } from './types'
 import { TaskDecomposer, taskDecomposer, type DecomposedTask } from './taskDecomposer'
 import { Orchestrator, orchestrator, type ExecutionPlan, type ExecutionStep } from './orchestrator'
 import { ResultAggregator, resultAggregator, type AggregationConfig } from './resultAggregator'
+import { SubAgentManager } from '../subAgentManager'
+import { subAgentResultToAgentOutput } from './agentAdapter'
 
 const STORAGE_KEY = 'harness_collaboration_sessions'
 
@@ -33,12 +35,21 @@ export class CollaborationManager {
   private orchestrator: Orchestrator
   private aggregator: ResultAggregator
   private aggregationStrategy: AggregationConfig['strategy'] = 'sequential'
+  private subAgentManager: SubAgentManager | null = null
 
-  constructor() {
+  constructor(subAgentMgr?: SubAgentManager) {
     this.registerBuiltInAgents()
     this.taskDecomposer = new TaskDecomposer()
     this.orchestrator = new Orchestrator()
     this.aggregator = new ResultAggregator()
+    this.subAgentManager = subAgentMgr || null
+  }
+
+  /**
+   * Set the SubAgentManager instance for real agent execution
+   */
+  setSubAgentManager(manager: SubAgentManager): void {
+    this.subAgentManager = manager
   }
 
   /**
@@ -235,13 +246,23 @@ export class CollaborationManager {
     }
 
     try {
-      // Simulate task execution (in real implementation, this would invoke LLM)
-      const result: AgentOutput = {
-        agentId: agent?.id || 'system',
-        role: agent?.config.role || 'orchestrator',
-        success: true,
-        content: `Executed: ${task.description}`,
-        metadata: { taskId, executedAt: Date.now() }
+      let result: AgentOutput
+
+      if (this.subAgentManager && agent) {
+        // Real execution via SubAgentManager
+        const subAgent = this.subAgentManager.createAgent(`collab-${agent.id}`)
+        this.subAgentManager.addTask(subAgent.id, task.description, [], task.dependencies)
+        const subResult = await this.subAgentManager.runAgent(subAgent.id)
+        result = subAgentResultToAgentOutput(subResult, taskId)
+      } else {
+        // Fallback mock execution
+        result = {
+          agentId: agent?.id || 'system',
+          role: agent?.config.role || 'orchestrator',
+          success: true,
+          content: `Executed: ${task.description}`,
+          metadata: { taskId, executedAt: Date.now() }
+        }
       }
 
       task.result = result
