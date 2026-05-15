@@ -22,6 +22,7 @@ import { Orchestrator, orchestrator, type ExecutionPlan, type ExecutionStep } fr
 import { ResultAggregator, resultAggregator, type AggregationConfig } from './resultAggregator'
 import { SubAgentManager } from '../subAgentManager'
 import { subAgentResultToAgentOutput } from './agentAdapter'
+import { saveSessions, loadSessions, type SerializedSession } from './sessionStorage'
 
 const STORAGE_KEY = 'harness_collaboration_sessions'
 
@@ -58,10 +59,11 @@ export class CollaborationManager {
   async initialize(): Promise<void> {
     if (this.initialized) return
 
-    // Load sessions from localStorage
+    // Load sessions from IndexedDB (with localStorage fallback)
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
       if (stored) {
+        // Legacy localStorage format - migrate to IndexedDB
         const sessionsData = JSON.parse(stored) as Array<Omit<CollaborationSession, 'agents' | 'tasks' | 'results'> & { agents: [string, AgentInstance][]; tasks: CollaborationTask[]; results: [string, AgentOutput][] }>
         
         for (const sessionData of sessionsData) {
@@ -71,6 +73,30 @@ export class CollaborationManager {
             results: new Map(sessionData.results)
           }
           this.sessions.set(session.id, session)
+        }
+        // Migrate to IndexedDB
+        await this.persistSessions()
+        // Clear legacy localStorage
+        localStorage.removeItem(STORAGE_KEY)
+      } else {
+        // Try IndexedDB directly
+        const idbData = await loadSessions()
+        if (idbData) {
+          for (const sessionData of idbData) {
+            const session: CollaborationSession = {
+              id: sessionData.id,
+              name: sessionData.name,
+              description: sessionData.description,
+              status: sessionData.status as any,
+              agents: new Map(sessionData.agents),
+              tasks: sessionData.tasks,
+              results: new Map(sessionData.results),
+              createdAt: sessionData.createdAt,
+              updatedAt: sessionData.updatedAt,
+              completedAt: sessionData.completedAt
+            }
+            this.sessions.set(session.id, session)
+          }
         }
       }
     } catch (error) {
@@ -624,6 +650,10 @@ export class CollaborationManager {
    */
   private async persistSessions(): Promise<void> {
     try {
+      // Save to IndexedDB for better crash recovery
+      await saveSessions(this.sessions)
+      
+      // Also keep localStorage for backwards compatibility
       const sessionsData = Array.from(this.sessions.values()).map(session => ({
         ...session,
         agents: Array.from(session.agents.entries()),
