@@ -201,6 +201,7 @@ function createPathAdapter(): IPathAdapter {
   }
 
   return {
+    sep: process.platform === 'win32' ? '\\' : '/',
     toNativePath,
     toPosixPath,
     toWindowsPath,

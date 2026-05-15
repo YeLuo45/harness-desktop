@@ -297,7 +297,7 @@ export class Orchestrator {
       
       const deps = dependencies.get(taskId)
       if (deps) {
-        for (const depId of deps) {
+        for (const depId of Array.from(deps)) {
           visit(depId)
         }
       }
@@ -338,7 +338,7 @@ export class Orchestrator {
       
       // Can be parallel if they share no dependencies
       let hasConflict = false
-      for (const dep of currentDeps) {
+      for (const dep of Array.from(currentDeps)) {
         if (taskDeps.has(dep)) {
           hasConflict = true
           break

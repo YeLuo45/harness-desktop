@@ -10,16 +10,18 @@ export abstract class BaseProvider implements Provider {
 
   constructor(config: ProviderConfig) {
     this.config = {
-      name: config.name,
+      ...config,
       temperature: config.temperature ?? 0.7,
       maxTokens: config.maxTokens ?? 2048,
       timeout: config.timeout ?? 30000,
-      ...config,
-    };
+    }
   }
 
   abstract chat(messages: LLMMessage[]): Promise<LLMResponse>;
   abstract complete(prompt: string): Promise<LLMResponse>;
+  stream(options: any): void {
+    throw new Error('stream not implemented');
+  }
 
   isConfigured(): boolean {
     return !!this.config.apiKey || !!this.config.baseUrl;

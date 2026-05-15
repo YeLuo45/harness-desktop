@@ -68,7 +68,7 @@ export class MultiAgentEngine {
    * Create a specialized sub-agent
    */
   createSpecializedAgent(name: string, role: AgentRole, parentId?: string): SubAgent {
-    const parent = parentId || this.orchestratorId
+    const parent = parentId ?? this.orchestratorId ?? undefined
     return this.manager.createAgent(name, parent)
   }
 

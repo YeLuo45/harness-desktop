@@ -5,6 +5,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid'
+import type { AgentConfig, AgentRole } from '../../types'
 import type {
   AgentInstance,
   AgentOutput,
@@ -13,10 +14,7 @@ import type {
   OrchestrationPlan,
   AggregationResult,
   CollaborationEvent,
-  CollaborationEventHandler,
-  AgentConfig,
-  AgentRole,
-  BUILT_IN_AGENTS
+  CollaborationEventHandler
 } from './types'
 import { BUILT_IN_AGENTS, CollaborationStatus } from './types'
 import { TaskDecomposer, taskDecomposer, type DecomposedTask } from './taskDecomposer'
@@ -301,7 +299,8 @@ export class CollaborationManager {
     while (visited.size < tasks.length) {
       // Find tasks with no remaining dependencies
       const level: string[] = []
-      for (const [taskId, degree] of inDegree) {
+      for (const entry of Array.from(inDegree.entries())) {
+        const [taskId, degree] = entry
         if (degree === 0 && !visited.has(taskId)) {
           level.push(taskId)
         }
@@ -395,7 +394,7 @@ export class CollaborationManager {
    * Emit an event to all handlers
    */
   private emitEvent(event: CollaborationEvent): void {
-    for (const handler of this.eventHandlers) {
+    for (const handler of Array.from(this.eventHandlers)) {
       try {
         handler(event)
       } catch (error) {

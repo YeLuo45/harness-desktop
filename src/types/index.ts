@@ -276,7 +276,8 @@ export interface SubAgentResult {
   success: boolean
   tasks: SubTaskResult[]
   aggregatedOutput: string
-  kvCacheSnapshot: KVCacheSnapshot
+  kvCacheSnapshot?: KVCacheSnapshot
+  error?: string
 }
 
 // ==========================================

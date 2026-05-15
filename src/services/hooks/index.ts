@@ -2,15 +2,23 @@
  * Hook System - Public API
  */
 
-// Types
-export {
-  HookPhase,
+// Types - import locally to use in this file, then re-export
+import type {
   HookContext,
   HookResult,
   HookDefinition,
   HookRegistryConfig,
   HookExecutionSummary,
 } from './types';
+
+export { HookPhase } from './types';
+export type {
+  HookContext,
+  HookResult,
+  HookDefinition,
+  HookRegistryConfig,
+  HookExecutionSummary,
+};
 
 // Registry
 export {
@@ -27,8 +35,8 @@ export * from './builtin/validation';
 /**
  * Create a simple hook handler function
  */
-export function createHookHandler<T extends HookContext>(
-  handler: (context: T) => Promise<HookResult> | HookResult
+export function createHookHandler(
+  handler: (context: HookContext) => Promise<HookResult> | HookResult
 ): (context: HookContext) => Promise<HookResult> | HookResult {
   return handler;
 }

@@ -3,7 +3,8 @@
  * 整合文档管理、分块、Embedding、向量存储和检索功能
  */
 
-import { Document, ChunkWithEmbedding, SearchResult, ChunkOptions, Embedder } from './types';
+import { Document, ChunkWithEmbedding, SearchResult, ChunkOptions } from './types';
+import type { Embedder } from './embedder';
 import { DocumentManager, documentManager } from './documentManager';
 import { Chunker, chunker } from './chunker';
 import { Embedder as EmbedderType, LocalEmbedder, defaultEmbedder } from './embedder';

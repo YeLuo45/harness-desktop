@@ -8,7 +8,6 @@ import {
   type PlatformType, 
   type PlatformAdapter, 
   type PlatformCapabilities,
-  type PlatformInfo,
   DEFAULT_CAPABILITIES 
 } from './types'
 import { ElectronPlatformAdapter } from './adapters/electronAdapter'
@@ -17,6 +16,14 @@ import { TelegramPlatformAdapter } from './adapters/telegramAdapter'
 import { FeishuPlatformAdapter } from './adapters/feishuAdapter'
 
 export { type PlatformType, type PlatformAdapter, type PlatformCapabilities }
+
+// Harness platform info (different from the OS-level PlatformInfo in types.ts)
+export interface HarnessPlatformInfo {
+  type: PlatformType;
+  name: string;
+  version: string;
+  capabilities: PlatformCapabilities;
+}
 
 const platformAdapters: Record<PlatformType, PlatformAdapter | null> = {
   electron: null,
@@ -134,7 +141,7 @@ class PlatformManager {
   /**
    * Get platform info
    */
-  getPlatformInfo(): PlatformInfo {
+  getPlatformInfo(): HarnessPlatformInfo {
     const capabilities = this.adapter?.getCapabilities() || DEFAULT_CAPABILITIES[this.currentPlatform]
     
     return {

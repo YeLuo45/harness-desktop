@@ -21,11 +21,11 @@ export abstract class BaseAdapter implements LLMProvider {
   protected abstract getDefaultConfig(): Partial<ProviderConfig>
 
   get endpoint(): string {
-    return this.config.endpoint || this.defaultEndpoint
+    return (this.config.endpoint as string) || this.defaultEndpoint
   }
 
   get modelName(): string {
-    return this.config.modelName || this.defaultModel
+    return (this.config.model as string) || this.defaultModel
   }
 
   abstract chat(options: { messages: ChatMessage[]; systemPrompt?: string; tools?: any[] }): Promise<ChatResponse>
@@ -43,13 +43,13 @@ export abstract class BaseAdapter implements LLMProvider {
   validateConfig(config: ProviderConfig): ValidationResult {
     const allErrors: string[] = []
 
-    const keyResult = validateApiKey(this.id, config.apiKey)
+    const keyResult = validateApiKey(this.id, (config.apiKey as string) || '')
     if (!keyResult.valid) allErrors.push(...keyResult.errors || [])
 
-    const endpointResult = validateEndpoint(config.endpoint || this.defaultEndpoint)
+    const endpointResult = validateEndpoint((config.endpoint as string) || this.defaultEndpoint)
     if (!endpointResult.valid) allErrors.push(...endpointResult.errors || [])
 
-    const modelResult = validateModel(config.modelName || this.defaultModel)
+    const modelResult = validateModel(config.model || this.defaultModel)
     if (!modelResult.valid) allErrors.push(...modelResult.errors || [])
 
     return { valid: allErrors.length === 0, errors: allErrors.length > 0 ? allErrors : undefined }

@@ -4,7 +4,7 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { AuditEntry, ProcessIsolatorConfig, AuditEventType } from './types';
-import { getPlatformImpl } from '../../../../src/services/platform/platformDetect';
+import { getPlatformImpl } from '../platform/platformDetect';
 
 export class ProcessIsolator {
   private config: ProcessIsolatorConfig;

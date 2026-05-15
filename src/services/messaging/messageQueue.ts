@@ -9,7 +9,8 @@ import type {
   Message, 
   QueuedMessage, 
   QueueConfig,
-  MessageStatus 
+  MessageStatus,
+  MessagePriority 
 } from './messageTypes';
 import { DEFAULT_QUEUE_CONFIG } from './messageTypes';
 
@@ -196,7 +197,7 @@ export class MessageQueue {
    * Get all queued messages
    */
   getAllMessages(): Message[] {
-    return this.queue.getItems().map(qm => qm.message);
+    return this.queue.getItems().map(qm => qm.item.message);
   }
 
   /**
@@ -274,9 +275,14 @@ export class MessageQueue {
         // Schedule retry if possible
         if (message.retryCount < this.config.maxRetries) {
           const delay = this.calculateBackoff(message.retryCount);
-          message.processAfter = Date.now() + delay;
           message.retryCount++;
-          this.queue.enqueue({ message, enqueuedAt: Date.now(), processAfter: message.processAfter, attempts: message.retryCount }, this.getMessagePriority(message));
+          const queuedMessage: QueuedMessage = { 
+            message, 
+            enqueuedAt: Date.now(), 
+            processAfter: Date.now() + delay, 
+            attempts: message.retryCount 
+          };
+          this.queue.enqueue(queuedMessage, this.getMessagePriority(message));
         }
       }
     }

@@ -460,11 +460,11 @@ class TraceServiceImpl {
     if (query.level) {
       results = results.filter(t => t.level === query.level);
     }
-    if (query.startDate) {
-      results = results.filter(t => t.startTime >= query.startDate);
+    if (query.startDate !== undefined) {
+      results = results.filter(t => t.startTime >= query.startDate!);
     }
-    if (query.endDate) {
-      results = results.filter(t => t.startTime <= query.endDate);
+    if (query.endDate !== undefined) {
+      results = results.filter(t => t.startTime <= query.endDate!);
     }
 
     // Sort by start time descending

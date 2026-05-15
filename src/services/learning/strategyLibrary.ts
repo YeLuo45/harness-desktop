@@ -339,7 +339,7 @@ export class StrategyLibrary {
     
     if (matchedStrategies.length === 0) {
       const defaultStrategy = this.strategies.get(this.defaultStrategyId)!
-      return this.createStrategyResult(defaultStrategy, context, 'medium')
+      return this.createStrategyResult(defaultStrategy, context, 0.5)
     }
 
     matchedStrategies.sort((a, b) => {

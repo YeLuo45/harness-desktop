@@ -128,7 +128,7 @@ export class LLMBridge {
         messages,
         systemPrompt: this.systemPrompt,
         tools,
-        onChunk: (chunk) => {
+        onChunk: (chunk: string) => {
           fullContent += chunk
           callbacks.onChunk(chunk)
         },
@@ -142,7 +142,7 @@ export class LLMBridge {
             toolCalls: []
           })
         },
-        onError: (error) => {
+        onError: (error: Error) => {
           rendererLog('error', 'LLMBridge', 'stream error', { error: error.message })
           callbacks.onError(error)
           resolve({

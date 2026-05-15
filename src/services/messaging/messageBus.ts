@@ -15,6 +15,7 @@ import type {
   MiddlewareContext,
   MessagingEvent,
   MessagingEventType,
+  MessageType,
 } from './messageTypes';
 import { DEFAULT_MESSAGE_BUS_CONFIG } from './messageTypes';
 
@@ -32,7 +33,7 @@ interface TopicSubscription {
 class TopicManager {
   private topics: Map<string, PubSubTopic> = new Map();
 
-  createTopic(name: string, messageTypes: string[] = []): PubSubTopic {
+  createTopic(name: string, messageTypes: MessageType[] = []): PubSubTopic {
     if (this.topics.has(name)) {
       return this.topics.get(name)!;
     }
@@ -228,7 +229,7 @@ export class MessageBus {
   /**
    * Create a new topic
    */
-  createTopic(name: string, messageTypes?: string[]): boolean {
+  createTopic(name: string, messageTypes?: MessageType[]): boolean {
     this.topicManager.createTopic(name, messageTypes);
     return true;
   }

@@ -6,7 +6,8 @@ import { registerTool } from '../decorators'
 import type { ToolExecutor } from '../types'
 import { getVerificationHooks } from '../../verificationHooks'
 import type { ToolResult } from '../../../types'
-import { createPathAdapter } from '../../../../src/services/platform/pathAdapter'
+import { createPathAdapter } from '../../platform/pathAdapter'
+import * as path from 'path'
 
 // File system operations using Node.js
 let fs: typeof import('fs') | null = null
@@ -120,11 +121,6 @@ function getAuditLogs(options?: {
 // ==================== Path Security Checks ====================
 
 /**
- * Get the path adapter for cross-platform path operations
- */
-const pathAdapter = platform.path
-
-/**
  * Normalize a path to absolute form and resolve symlinks
  */
 function normalizePath(p: string): string {
@@ -132,13 +128,18 @@ function normalizePath(p: string): string {
 }
 
 /**
+ * Get the path separator
+ */
+const pathSep = pathAdapter.sep
+
+/**
  * Check if a path matches a sensitive path pattern
  * Supports wildcards in SENSITIVE_PATHS definitions
  */
 function isSensitivePath(targetPath: string): boolean {
   const normalizedTarget = normalizePath(targetPath)
-  const sep = pathAdapter.sep
-  
+  const sep = pathSep
+
   for (const sensitive of SENSITIVE_PATHS) {
     const normalizedSensitive = pathAdapter.resolve(sensitive)
     
@@ -172,8 +173,8 @@ function isSensitivePath(targetPath: string): boolean {
  */
 function isPathInWhitelist(targetPath: string): boolean {
   const normalizedTarget = normalizePath(targetPath)
-  const sep = pathAdapter.sep
-  
+  const sep = pathSep
+
   for (const allowedDir of ALLOWED_DIRECTORIES) {
     const normalizedAllowed = pathAdapter.resolve(allowedDir)
     

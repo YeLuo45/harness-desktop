@@ -31,12 +31,12 @@ export function register<T = unknown>(
     id: getSubscriberId(),
     type,
     handler: handler as EventHandler,
-    priority,
+    priority: priority,
   };
 
   const list = getOrCreateList(type);
-  list.push(subscriber);
-  list.sort((a, b) => b.priority - a.priority);
+  list.push(subscriber as Subscriber<unknown>);
+  list.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 
   return subscriber;
 }

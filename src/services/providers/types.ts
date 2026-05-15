@@ -36,6 +36,7 @@ export interface Provider {
   config: ProviderConfig;
   chat(messages: LLMMessage[]): Promise<LLMResponse>;
   complete(prompt: string): Promise<LLMResponse>;
+  stream(options: any): void;
   isConfigured(): boolean;
 }
 
@@ -46,4 +47,34 @@ export interface ProviderInfo {
   name: string;
   description: string;
   models: string[];
+}
+
+// LLMProvider interface for provider abstraction layer
+export interface LLMProvider {
+  id: string;
+  name: string;
+  defaultEndpoint: string;
+  defaultModel: string;
+  chat(options: { messages: any[]; systemPrompt?: string; tools?: any[] }): Promise<any>;
+  stream(options: any): void;
+  getCapabilities(): ProviderCapabilities;
+  validateConfig(config: ProviderConfig): ValidationResult;
+}
+
+// Provider factory type
+export type ProviderFactory = (config: ProviderConfig) => LLMProvider;
+
+// Validation result type
+export interface ValidationResult {
+  valid: boolean;
+  errors?: string[];
+  warnings?: string[];
+}
+
+// Provider capabilities
+export interface ProviderCapabilities {
+  maxTokens: number;
+  streaming: boolean;
+  tools: boolean;
+  vision: boolean;
 }

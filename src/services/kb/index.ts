@@ -3,7 +3,7 @@
  */
 
 // 类型导出
-export {
+export type {
   Document,
   Chunk,
   ChunkWithEmbedding,
@@ -20,13 +20,13 @@ export { DocumentManager, documentManager } from './documentManager';
 export { Chunker, chunker } from './chunker';
 
 // Embedder
-export { Embedder, LocalEmbedder, defaultEmbedder } from './embedder';
+export type { Embedder } from './embedder';
+export { LocalEmbedder, defaultEmbedder } from './embedder';
 
 // 向量存储
-export { VectorStore, SQLiteVectorStore, vectorStore } from './vectorStore';
-
-// 检索器
-export { Retriever, retriever } from './retriever';
+export type { VectorStore } from './vectorStore';
+export { SQLiteVectorStore, vectorStore } from './vectorStore';
 
 // 知识库管理器
-export { KBManager, KBManagerOptions, kbManager } from './kbManager';
+export type { KBManagerOptions } from './kbManager';
+export { KBManager, kbManager } from './kbManager';

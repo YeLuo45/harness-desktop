@@ -229,7 +229,7 @@ function traverseBFS(
     if (options.maxDepth !== undefined && depth > options.maxDepth) continue;
     if (options.filter && !options.filter(node)) continue;
     
-    const parent = node.parentId ? tree.nodes.get(node.parentId) : null;
+    const parent = node.parentId ? (tree.nodes.get(node.parentId) ?? null) : null;
     const result = callback(node, depth, parent);
     if (result === false) return; // Stop traversal
     
@@ -254,7 +254,7 @@ function traverseDFS(
     if (!node) return;
     if (options.filter && !options.filter(node)) return;
     
-    const parent = node.parentId ? tree.nodes.get(node.parentId) : null;
+    const parent = node.parentId ? (tree.nodes.get(node.parentId) ?? null) : null;
     const result = callback(node, depth, parent);
     if (result === false) return false;
     
@@ -402,13 +402,13 @@ export function getLowestCommonAncestor(
   if (!nodeA || !nodeB) return null;
   
   const pathA = new Set(nodeA.path);
-  let current = nodeB;
+  let current: HierarchyNode | null = nodeB;
   
   while (current) {
     if (pathA.has(current.id)) {
       return current;
     }
-    current = current.parentId ? tree.nodes.get(current.parentId) ?? undefined : undefined;
+    current = current.parentId ? (tree.nodes.get(current.parentId) ?? null) : null;
   }
   
   return null;

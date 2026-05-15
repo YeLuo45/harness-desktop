@@ -16,7 +16,7 @@ export interface NetworkGuardConfig {
 export class NetworkGuard {
   private config: NetworkGuardConfig;
   private requestLog: NetworkRequest[] = [];
-  private requestCounts: Map<string, number> = new Map();
+  private requestCounts: Map<string, number[]> = new Map();
 
   constructor(config: NetworkGuardConfig) {
     this.config = config;

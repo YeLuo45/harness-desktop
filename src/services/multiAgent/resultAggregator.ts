@@ -66,7 +66,7 @@ export class ResultAggregator {
         break
     }
 
-    summary = this.generateSummary(outputs, finalConfig)
+    summary = this.generateSummary(outputs)
 
     const successful = outputs.filter(o => o.success).length
     const failed = outputs.length - successful
@@ -171,7 +171,9 @@ export class ResultAggregator {
 
     // Check first line agreement
     const firstLines = lines.map(l => l[0]?.trim()).filter(Boolean)
-    if (this.countOccurrences(firstLines) > outputs.length / 2) {
+    const firstLineCounts = this.countOccurrences(firstLines)
+    const maxFirstLineCount = Math.max(...Array.from(firstLineCounts.values()), 0)
+    if (maxFirstLineCount > outputs.length / 2) {
       consensusLines.push(this.getMostCommon(firstLines) || '')
     }
 
@@ -309,7 +311,8 @@ export class ResultAggregator {
     let maxCount = 0
     let mostCommon: string | undefined
     
-    for (const [value, count] of counts) {
+    for (const entry of Array.from(counts.entries())) {
+      const [value, count] = entry
       if (count > maxCount) {
         maxCount = count
         mostCommon = value

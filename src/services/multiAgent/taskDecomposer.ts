@@ -389,7 +389,7 @@ export class TaskDecomposer {
       }
     }
 
-    for (const group of groupMap.values()) {
+    for (const group of Array.from(groupMap.values())) {
       groups.push(group)
       group.forEach(id => assigned.add(id))
     }

@@ -45,7 +45,8 @@ export class WorkflowDiscovery {
   async getRecent(limit = 20): Promise<SearchResult> {
     return marketplace.search({
       sortBy: 'recent',
-      limit
+      limit,
+      offset: 0
     })
   }
 
@@ -61,7 +62,8 @@ export class WorkflowDiscovery {
     const all = await marketplace.search({
       category: pkg.category,
       sortBy: 'rating',
-      limit: 50
+      limit: 50,
+      offset: 0
     })
 
     return all.items
@@ -72,7 +74,7 @@ export class WorkflowDiscovery {
 
   // Get popular tags
   async getPopularTags(limit = 20): Promise<{ tag: string; count: number }[]> {
-    const all = await marketplace.search({ sortBy: 'relevance', limit: 100 })
+    const all = await marketplace.search({ sortBy: 'relevance', limit: 100, offset: 0 })
     const tagCounts = new Map<string, number>()
 
     all.items.forEach(pkg => {

@@ -1,8 +1,9 @@
 /**
  * Built-in Skill: File Operations
+ * Note: fileOps functionality is provided by fileTool.ts
  */
 
-import { SkillManifest } from '../types';
+import type { SkillManifest } from '../types';
 
 export const fileOpsManifest: SkillManifest = {
   id: 'builtin:fileOps',
@@ -11,15 +12,8 @@ export const fileOpsManifest: SkillManifest = {
   description: 'Read, write, and manage files',
   author: 'Hermes Team',
   tags: ['file', 'io', 'builtin'],
-  entryPoint: './builtin/fileOps',
+  entryPoint: './fileTool',
 };
 
-export async function readFile(path: string): Promise<string> {
-  const { read_file } = await import('../../../tools/fileOps');
-  return read_file({ path });
-}
-
-export async function writeFile(path: string, content: string): Promise<void> {
-  const { write_file } = await import('../../../tools/fileOps');
-  return write_file({ path, content });
-}
+// Re-export from fileTool for skill compatibility
+export { fileToolDefinitions, fileToolExecutors } from '../../tools/builtin/fileTool';

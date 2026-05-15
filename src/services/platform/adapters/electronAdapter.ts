@@ -5,7 +5,7 @@
  */
 
 import type { PlatformAdapter, PlatformCapabilities, WebSocketAdapter } from '../types'
-import type { ElectronAPI } from '../../types'
+import type { ElectronAPI } from '../../../types'
 
 export class ElectronPlatformAdapter implements PlatformAdapter {
   readonly platform = 'electron' as const

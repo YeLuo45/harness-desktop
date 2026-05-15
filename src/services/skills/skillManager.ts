@@ -207,7 +207,7 @@ export class SkillManager implements SkillRegistry {
       throw new Error(`Skill not found: ${skillId}`)
     }
 
-    return this.renderTemplate(skill.template, variables, skill.variables, options)
+    return this.renderTemplate(skill.template, variables, skill.variables.map(v => ({ name: v.name, required: v.required ?? false, default: v.defaultValue })), options)
   }
 
   /**

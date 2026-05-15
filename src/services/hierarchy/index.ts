@@ -18,13 +18,15 @@ export * from './hierarchyTypes';
 
 // Core Service
 export { HierarchyService, hierarchyService } from './hierarchyService';
-export { DEFAULT_HIERARCHY_CONFIG } from './hierarchyService';
 
 // Node Utilities
 export * from './hierarchyNode';
 
 // Traversal Utilities
 export * from './hierarchyTraversal';
+
+// Config
+export { DEFAULT_HIERARCHY_CONFIG } from './hierarchyTypes';
 
 // ============================================================================
 // Quick Start Example
@@ -132,6 +134,8 @@ export * from './hierarchyTraversal';
 // ============================================================================
 // Default Export
 // ============================================================================
+
+import { hierarchyService } from './hierarchyService';
 
 export default {
   service: hierarchyService,

@@ -19,6 +19,7 @@ export enum TaskStatus {
 export interface ScheduledTask {
   id: string
   type: string
+  status: TaskStatus
   priority: Priority
   payload: unknown
   createdAt: number

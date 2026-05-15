@@ -23,7 +23,7 @@
  * ```
  */
 
-export {
+export type {
   Platform,
   Arch,
   PlatformInfo,
@@ -43,13 +43,26 @@ export {
   isLinux,
   isMacOS,
   is64Bit,
-  getPlatformInfo,
+  getPlatformInfo as getOSPlatformInfo,
   getPlatformImpl,
 } from './platformDetect';
 
 export { createPathAdapter } from './pathAdapter';
 export { createProcessAdapter } from './processAdapter';
-export { createShellAdapter, DANGEROUS_COMMANDS } from './shellAdapter';
+export { createShellAdapter } from './shellAdapter';
+
+// Re-export from platformManager for harness platform detection
+export {
+  platformManager,
+  getPlatform,
+  getCapabilities,
+  supports,
+  isDesktop,
+  isMobile,
+  getPlatformInfo,
+  type PlatformType,
+  type PlatformCapabilities,
+} from './platformManager';
 
 import { getPlatformInfo, getPlatformImpl } from './platformDetect';
 import { createPathAdapter } from './pathAdapter';

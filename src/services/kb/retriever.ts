@@ -4,7 +4,7 @@
  */
 
 import { SearchResult, ChunkWithEmbedding } from './types';
-import { VectorStore } from './vectorStore';
+import { VectorStore, vectorStore } from './vectorStore';
 
 export class Retriever {
   private vectorStore: VectorStore;

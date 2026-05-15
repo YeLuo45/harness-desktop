@@ -14,16 +14,8 @@ import type {
   HierarchyEvent,
   HierarchyEventType,
   HierarchyNodeType,
-  DEFAULT_HIERARCHY_CONFIG,
 } from './hierarchyTypes';
-
-// Re-export config constant
-export const DEFAULT_HIERARCHY_CONFIG = {
-  allowMultipleRoots: false,
-  maxDepth: 100,
-  maxChildren: 1000,
-  autoIncrementLevel: true,
-};
+import { DEFAULT_HIERARCHY_CONFIG } from './hierarchyTypes';
 
 // ============================================================================
 // Event Listener Types
@@ -236,7 +228,7 @@ export class HierarchyService {
     if (newParentId && !newParent) return false;
 
     // Prevent moving to own descendant
-    if (newParent && this.isDescendant(tree, nodeId, newParentId)) {
+    if (newParentId && this.isDescendant(tree, nodeId, newParentId)) {
       return false;
     }
 

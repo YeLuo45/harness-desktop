@@ -28,10 +28,12 @@ export function detect(): Platform {
  * Detect the current architecture
  */
 export function getArch(): Arch {
-  switch (archString) {
+  const arch = archString as string;
+  switch (arch) {
     case 'x64':
       return Arch.X64;
     case 'ia32':
+      return Arch.X86;
     case 'x86':
       return Arch.X86;
     case 'arm64':

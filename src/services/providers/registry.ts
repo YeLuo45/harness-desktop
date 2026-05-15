@@ -77,31 +77,33 @@ class ProviderRegistryImpl {
       name: id,
       defaultEndpoint: '',
       defaultModel: '',
-      chat: async (options) => {
+      chat: async (options: { messages: any[]; systemPrompt?: string; tools?: any[] }) => {
         if (!instance) {
           instance = factory({
+            name: id,
             apiKey: '',
-            modelName: ''
+            model: ''
           })
         }
         return instance.chat(options)
       },
-      stream: (options) => {
+      stream: (options: any) => {
         if (!instance) {
           instance = factory({
+            name: id,
             apiKey: '',
-            modelName: ''
+            model: ''
           })
         }
         instance.stream(options)
       },
       getCapabilities: () => {
         if (!instance) {
-          instance = factory({ apiKey: '', modelName: '' })
+          instance = factory({ name: id, apiKey: '', model: '' })
         }
         return instance.getCapabilities()
       },
-      validateConfig: (config) => {
+      validateConfig: (config: ProviderConfig) => {
         if (!instance) {
           instance = factory(config)
         }
@@ -144,10 +146,10 @@ class ProviderRegistryImpl {
    */
   list(): string[] {
     const ids = new Set<string>()
-    for (const id of this.providers.keys()) {
+    for (const id of Array.from(this.providers.keys())) {
       ids.add(id)
     }
-    for (const id of this.factories.keys()) {
+    for (const id of Array.from(this.factories.keys())) {
       ids.add(id)
     }
     return Array.from(ids)

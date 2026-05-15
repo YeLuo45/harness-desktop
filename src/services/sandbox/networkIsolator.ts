@@ -110,7 +110,7 @@ export class NetworkIsolator {
     const secureLookup = (
       hostname: string,
       options: dns.LookupOptions,
-      callback: dns.LookupCallback
+      callback: (err: Error | null, address: string | undefined, family: number | undefined) => void
     ): void => {
       if (!self.config.allowNetwork) {
         callback(new Error('Network access is disabled'), undefined, undefined);
@@ -146,22 +146,20 @@ export class NetworkIsolator {
   /**
    * Create a socket factory with network restrictions
    */
-  createSecureSocket(): typeof net.Socket {
+  createSecureSocketFactory(): () => net.Socket {
     const self = this;
-
-    return class SecureSocket extends net.Socket {
-      constructor(options?: any) {
-        super(options);
-      }
-
-      override async connect(port: number, host?: string, connectionListener?: () => void): Promise<this> {
+    return () => {
+      const socket = new net.Socket();
+      const originalConnect = socket.connect.bind(socket);
+      socket.connect = ((port: number, host?: string, connectionListener?: () => void) => {
         if (host && !self.isHostAllowed(host, port)) {
-          this.destroy();
-          return this;
+          socket.destroy();
+          return socket;
         }
-        return super.connect(port, host, connectionListener);
-      }
-    } as typeof net.Socket;
+        return originalConnect(port, host!, connectionListener);
+      }) as typeof net.Socket.prototype.connect;
+      return socket;
+    };
   }
 
   /**

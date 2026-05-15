@@ -762,7 +762,7 @@ export class SubAgentManager {
     // Create orchestration plan if not exists
     let plan = this.executionPlans.get(orchestratorAgentId)
     if (!plan) {
-      plan = this.createOrchestrationPlan(orchestratorAgentId)
+      plan = this.createOrchestrationPlan(orchestratorAgentId) ?? undefined
     }
 
     if (!plan) {
