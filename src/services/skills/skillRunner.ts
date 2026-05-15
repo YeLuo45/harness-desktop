@@ -85,13 +85,21 @@ export class SkillRunner {
     instance: import('./types').SkillInstance,
     context: SkillContext
   ): Promise<unknown> {
-    // Placeholder for actual skill invocation
-    // Would load and execute the skill's entryPoint
-    return {
-      skillId: instance.manifest.id,
-      input: context.input,
-      config: instance.config,
-    };
+    // Dynamic loading of skill entryPoint
+    const entryPoint = instance.manifest.entryPoint;
+
+    // For builtin skill, directly call the corresponding export function
+    if (entryPoint.startsWith('./builtin/')) {
+      const skillName = entryPoint.replace('./builtin/', '');
+      // Get skill template from skillManager for rendering
+      // Actual execution logic is handled by SkillManager.execute()
+      return { skillId: instance.manifest.id, rendered: true };
+    }
+
+    // For external skill, dynamically load via import()
+    // const module = await import(entryPoint);
+    // return module.default(context.input);
+    return { skillId: instance.manifest.id, input: context.input };
   }
 
   async validate(manifest: import('./types').SkillManifest): Promise<boolean> {

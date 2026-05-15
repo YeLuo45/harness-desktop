@@ -138,6 +138,8 @@ export interface SkillExecution {
   renderedPrompt: string;
   executedAt: number;
   durationMs: number;
+  output?: unknown;  // New field
+  success?: boolean; // New field
 }
 
 /** Render options for template rendering */

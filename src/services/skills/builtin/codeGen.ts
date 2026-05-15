@@ -23,6 +23,25 @@ export async function generateCode(
   spec: string,
   options: CodeGenOptions
 ): Promise<string> {
-  // Placeholder for actual code generation
-  return `// Generated ${options.language} code for: ${spec}\nconsole.log("Hello, World!");`;
+  // Simulate code generation, return template code based on spec
+  const templates: Record<string, string> = {
+    'react-component': `import React from 'react';
+
+export const Component = ({}) => {
+  return <div>{/* {{spec}} */}</div>;
+};`,
+    'typescript-function': `export function {{name}}({{params}}) {
+  // {{spec}}
+  return result;
+}`,
+    'default': `// Generated code for: {{spec}}
+console.log("Generated with {{language}}");`
+  };
+
+  const template = templates[options.template || 'default'];
+  return template
+    .replace(/\{\{spec\}\}/g, spec)
+    .replace(/\{\{language\}\}/g, options.language || 'TypeScript')
+    .replace(/\{\{name\}\}/g, 'myFunction')
+    .replace(/\{\{params\}\}/g, 'input: string');
 }

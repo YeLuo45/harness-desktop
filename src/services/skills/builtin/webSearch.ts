@@ -14,19 +14,32 @@ export const webSearchManifest: SkillManifest = {
   entryPoint: './builtin/webSearch',
 };
 
+export interface WebSearchOptions {
+  query: string;
+  limit?: number;
+}
+
 export interface SearchResult {
   title: string;
   url: string;
   snippet: string;
 }
 
+export async function webSearch(options: WebSearchOptions): Promise<{ results: SearchResult[] }> {
+  // Simulate search results
+  return {
+    results: [
+      {
+        title: `Result for: ${options.query}`,
+        url: `https://example.com/search?q=${encodeURIComponent(options.query)}`,
+        snippet: `Search results for "${options.query}" would appear here.`
+      }
+    ]
+  };
+}
+
+// Alias for backwards compatibility
 export async function search(query: string): Promise<SearchResult[]> {
-  // Placeholder for actual web search implementation
-  return [
-    {
-      title: `Result for: ${query}`,
-      url: `https://example.com/search?q=${encodeURIComponent(query)}`,
-      snippet: `Search results for "${query}"`,
-    },
-  ];
+  const result = await webSearch({ query });
+  return result.results;
 }

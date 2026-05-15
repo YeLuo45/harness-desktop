@@ -16,6 +16,7 @@ import type {
   BUILT_IN_SKILLS
 } from './types'
 import { BUILT_IN_SKILLS as builtInSkillTemplates } from './types'
+import { runner } from './skillRunner'
 
 const STORAGE_KEY = 'harness_skills'
 const EXECUTION_KEY = 'harness_skill_executions'
@@ -217,12 +218,17 @@ export class SkillManager implements SkillRegistry {
     const startTime = Date.now()
     const renderedPrompt = this.render(skillId, variables, options)
 
+    // Execute asynchronously through skillRunner
+    const result = await runner.run(skillId, { variables, renderedPrompt }, { timeout: 30000 });
+
     const execution: SkillExecution = {
       skillId,
       variables,
       renderedPrompt,
       executedAt: startTime,
-      durationMs: Date.now() - startTime
+      durationMs: Date.now() - startTime,
+      output: result.output,
+      success: result.success
     }
 
     // Record execution
