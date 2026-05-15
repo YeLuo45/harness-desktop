@@ -6,6 +6,7 @@ import { initContextManager, getContextManager } from './services/contextManager
 import { getVerificationHooks, initVerificationHooks } from './services/verificationHooks'
 import { initSubAgentManager, getSubAgentManager } from './services/subAgentManager'
 import { initMultiAgentEngine, getMultiAgentEngine } from './services/multiAgentEngine'
+import { useCollaborationEvents } from './services/multiAgent'
 import { V2_TOOLS } from './services/modelAdapters'
 import type { Message, ToolResult, ExecutionPlan, PlanStep, ChatMessage, VerificationConfig, SubAgentResult } from './types'
 import Header from './components/Header'
@@ -95,6 +96,9 @@ function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Bridge CollaborationManager events → React state
+  useCollaborationEvents()
 
   // Initialize LLM bridge when config changes
   useEffect(() => {

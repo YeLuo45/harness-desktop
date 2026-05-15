@@ -32,3 +32,6 @@ export type { ConflictResolution } from './resultAggregator'
 
 // Agent Adapter
 export { subAgentResultToAgentOutput, collaborationTaskToSubTasks, extractTaskDescriptions } from './agentAdapter'
+
+// React hooks
+export { useCollaborationEvents } from './useCollaborationEvents'
