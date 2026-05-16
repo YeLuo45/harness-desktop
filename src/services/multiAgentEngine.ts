@@ -1,316 +1,519 @@
+/**
+ * Multi-Agent Engine Service
+ * 
+ * Core role-based scheduling engine for unattended multi-agent processing.
+ * Replaces stub implementation with real role orchestration.
+ */
+
 import { v4 as uuidv4 } from 'uuid'
-import type { SubAgent, SubTask, SubAgentResult, SubTaskResult, ToolCall, MemoryPointer, AgentRole, AgentCapabilities } from '../types'
+import type { ToolCall, ToolResult, SubAgent, SubAgentResult, SubTask, MemoryPointer } from '../types'
 import { SubAgentManager } from './subAgentManager'
+import { TaskQueue, getTaskQueue, type QueuedTask, type TaskPriority } from './taskQueue'
+import { MessageBus, getMessageBus, type AgentMessage } from './messageBus'
+import { RoleManager, getRoleManager, type Role, type RoleType, type RoleConfig } from './roleManager'
+import { getRoleStore, type StoredRoleConfig } from '../store/roleStore'
 
-// Agent role capabilities
-export const AgentRoleCapabilities: Record<AgentRole, readonly string[]> = {
-  orchestrator: ['plan', 'delegate', 'aggregate'],
-  code_reviewer: ['review', 'suggest', 'approve'],
-  test_generator: ['generate', 'validate', 'coverage'],
-  refactorer: ['extract', 'inline', 'rename', 'move']
+export type UnattendedTaskStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface UnattendedTask {
+  id: string
+  description: string
+  toolCalls: ToolCall[]
+  priority: TaskPriority
+  status: UnattendedTaskStatus
+  createdAt: number
+  startedAt?: number
+  completedAt?: number
+  retryCount: number
+  maxRetries: number
+  assignedRoleId?: string
+  result?: SubAgentResult
+  error?: string
+  dependencies: string[] // Task IDs that must complete before this task
 }
 
-// Default agent configurations
-export const DefaultAgentConfigs: Record<AgentRole, { maxConcurrentTasks: number; timeout: number; retryOnFailure: boolean }> = {
-  orchestrator: { maxConcurrentTasks: 4, timeout: 60000, retryOnFailure: true },
-  code_reviewer: { maxConcurrentTasks: 2, timeout: 30000, retryOnFailure: true },
-  test_generator: { maxConcurrentTasks: 3, timeout: 45000, retryOnFailure: true },
-  refactorer: { maxConcurrentTasks: 2, timeout: 45000, retryOnFailure: true }
+export interface EngineConfig {
+  maxConcurrentTasks: number
+  maxRetries: number
+  defaultTimeout: number
+  enableRoleScheduling: boolean
+  enableMessageBus: boolean
 }
 
-export interface TaskDecompositionResult {
-  tasks: Array<{
-    id: string
-    description: string
-    toolCalls: ToolCall[]
-    dependencies: string[]
-    assignedRole: AgentRole
-  }>
-  orchestratorPlan: string
+const DEFAULT_ENGINE_CONFIG: EngineConfig = {
+  maxConcurrentTasks: 4,
+  maxRetries: 3,
+  defaultTimeout: 60000,
+  enableRoleScheduling: true,
+  enableMessageBus: true
 }
 
-export interface AggregatedCollaborationResult {
-  success: boolean
-  totalAgents: number
-  successfulAgents: number
-  failedAgents: number
-  aggregatedOutput: string
-  kvCacheSnapshots: Map<string, { pointers: MemoryPointer[]; tokenCount: number; maxTokens: number }>
-  taskSummary: {
-    total: number
-    completed: number
-    failed: number
-    successRate: number
-  }
-}
+// Message types for inter-role communication
+export const MESSAGE_TYPES = {
+  TASK_ASSIGNED: 'task:assigned',
+  TASK_COMPLETED: 'task:completed',
+  TASK_FAILED: 'task:failed',
+  ROLE_STATUS: 'role:status',
+  RESULT_AGGREGATED: 'result:aggregated',
+  ENGINE_STATUS: 'engine:status'
+} as const
 
 export class MultiAgentEngine {
-  private manager: SubAgentManager
-  private orchestratorId: string | null = null
+  private config: EngineConfig
+  private taskQueue: TaskQueue
+  private messageBus: MessageBus
+  private roleManager: RoleManager
+  private subAgentManager: SubAgentManager
+  private unattendedTasks: Map<string, UnattendedTask> = new Map()
+  private runningTasks: Map<string, string> = new Map() // taskId -> roleId
+  private completedTasks: Map<string, UnattendedTask> = new Map()
+  private toolExecutor: ((toolName: string, args: Record<string, unknown>) => Promise<ToolResult>) | null = null
+  private isRunning = false
+  private processInterval?: ReturnType<typeof setInterval>
+  private listeners: Map<string, Array<(data: unknown) => void>> = new Map()
 
-  constructor(options?: { maxConcurrentAgents?: number; maxKVCacheSize?: number }) {
-    this.manager = new SubAgentManager({
-      maxConcurrentAgents: options?.maxConcurrentAgents || 4,
-      maxKVCacheSize: options?.maxKVCacheSize || 128000
+  constructor(options?: Partial<EngineConfig> & { taskQueue?: TaskQueue; messageBus?: MessageBus; roleManager?: RoleManager; subAgentManager?: SubAgentManager }) {
+    this.config = { ...DEFAULT_ENGINE_CONFIG, ...options }
+    
+    // Use provided instances or get singleton
+    this.taskQueue = options?.taskQueue || getTaskQueue()
+    this.messageBus = options?.messageBus || getMessageBus()
+    this.roleManager = options?.roleManager || getRoleManager()
+    this.subAgentManager = options?.subAgentManager || new SubAgentManager({
+      maxConcurrentAgents: this.config.maxConcurrentTasks * 2
     })
   }
 
   /**
-   * Create the orchestrator agent
+   * Initialize the engine with default role configurations
    */
-  createOrchestrator(name: string = 'MainOrchestrator'): SubAgent {
-    const orchestrator = this.manager.createAgent(name)
-    this.orchestratorId = orchestrator.id
-    return orchestrator
+  async initialize(): Promise<void> {
+    // Initialize role store and load/create default roles
+    try {
+      const roleStore = getRoleStore()
+      await roleStore.initializeDefaultRoles()
+      
+      // Register roles from store
+      const storedRoles = await roleStore.loadRoles()
+      for (const stored of storedRoles) {
+        if (stored.enabled) {
+          this.roleManager.registerRole(stored.name, stored.type, stored.config)
+        }
+      }
+    } catch (error) {
+      console.warn('[MultiAgentEngine] Role store initialization skipped:', error)
+    }
+
+    // Start health checks
+    this.roleManager.startHealthChecks(30000)
+
+    // Set up message bus subscriptions for inter-role communication
+    this.setupMessageBusSubscriptions()
   }
 
   /**
-   * Create a specialized sub-agent
+   * Set up message bus subscriptions
    */
-  createSpecializedAgent(name: string, role: AgentRole, parentId?: string): SubAgent {
-    const parent = parentId ?? this.orchestratorId ?? undefined
-    return this.manager.createAgent(name, parent)
+  private setupMessageBusSubscriptions(): void {
+    if (!this.config.enableMessageBus) return
+
+    // Subscribe to all role messages
+    this.messageBus.subscribe((message) => {
+      console.log(`[MultiAgentEngine] Message: ${message.type} from ${message.fromRole} to ${message.toRole}`)
+    }, { messageType: '*' })
   }
 
   /**
-   * Decompose a complex task into subtasks for multiple agents
+   * Set tool executor callback
    */
-  decomposeTask(
+  setToolExecutor(executor: (toolName: string, args: Record<string, unknown>) => Promise<ToolResult>): void {
+    this.toolExecutor = executor
+    this.subAgentManager.setToolExecutor(executor)
+  }
+
+  /**
+   * Submit an unattended task
+   */
+  async submitTask(
     description: string,
     toolCalls: ToolCall[],
     options?: {
-      maxSubtasks?: number
-      includeDependencies?: boolean
+      priority?: TaskPriority
+      timeout?: number
+      maxRetries?: number
+      dependencies?: string[]
+      assignedRoleType?: RoleType
     }
-  ): TaskDecompositionResult {
-    const maxSubtasks = options?.maxSubtasks || 5
-    const includeDependencies = options?.includeDependencies ?? true
+  ): Promise<string> {
+    const id = ` unattended-${uuidv4()}`
 
-    // Simple task decomposition heuristic
-    // In a real implementation, this would use LLM to intelligently decompose
-    const tasks: TaskDecompositionResult['tasks'] = []
-    const orchestratorPlan: string[] = []
+    const task: UnattendedTask = {
+      id,
+      description,
+      toolCalls,
+      priority: options?.priority || 'normal',
+      status: 'pending',
+      createdAt: Date.now(),
+      retryCount: 0,
+      maxRetries: options?.maxRetries ?? this.config.maxRetries,
+      dependencies: options?.dependencies || [],
+      assignedRoleId: undefined
+    }
 
-    if (toolCalls.length <= 1) {
-      // Single task, no decomposition needed
-      tasks.push({
-        id: uuidv4(),
-        description,
-        toolCalls,
-        dependencies: [],
-        assignedRole: 'orchestrator'
-      })
-      orchestratorPlan.push(`Execute: ${description}`)
-    } else {
-      // Group tool calls by complexity/type
-      const groupedCalls = this.groupToolCallsByComplexity(toolCalls)
+    this.unattendedTasks.set(id, task)
 
-      let depId = ''
-      for (const [group, calls] of Object.entries(groupedCalls)) {
-        const taskId = uuidv4()
-        const role = this.inferRoleFromGroup(group)
+    // Add to queue
+    this.taskQueue.enqueue('unattended', { taskId: id, toolCalls, description }, {
+      priority: task.priority,
+      timeout: options?.timeout ?? this.config.defaultTimeout,
+      maxRetries: task.maxRetries,
+      metadata: { taskId: id, assignedRoleType: options?.assignedRoleType }
+    })
 
-        tasks.push({
-          id: taskId,
-          description: `${group} task`,
-          toolCalls: calls,
-          dependencies: includeDependencies && depId ? [depId] : [],
-          assignedRole: role
+    this.emit('task:submitted', { taskId: id, description })
+
+    // Start processing if not running
+    if (!this.isRunning) {
+      this.start()
+    }
+
+    return id
+  }
+
+  /**
+   * Start the engine processing loop
+   */
+  start(): void {
+    if (this.isRunning) return
+    this.isRunning = true
+
+    // Initialize roles
+    for (const role of this.roleManager.getAllRoles()) {
+      this.roleManager.startRole(role.id)
+    }
+
+    // Start processing interval
+    this.processInterval = setInterval(() => {
+      this.processQueue()
+    }, 100)
+  }
+
+  /**
+   * Stop the engine
+   */
+  stop(): void {
+    this.isRunning = false
+    if (this.processInterval) {
+      clearInterval(this.processInterval)
+      this.processInterval = undefined
+    }
+    this.emit('engine:stopped', {})
+  }
+
+  /**
+   * Process queue and dispatch tasks to roles
+   */
+  private async processQueue(): Promise<void> {
+    if (!this.isRunning) return
+
+    // Check for tasks to start
+    const pending = this.taskQueue.getPendingTasks()
+    
+    for (const queued of pending) {
+      if (this.runningTasks.size >= this.config.maxConcurrentTasks) break
+
+      const taskId = (queued.metadata as { taskId?: string })?.taskId
+      if (!taskId) continue
+
+      const task = this.unattendedTasks.get(taskId)
+      if (!task || task.status !== 'pending') continue
+
+      // Check dependencies
+      if (!this.checkDependencies(task)) continue
+
+      // Assign to available role
+      const roleType = (queued.metadata as { assignedRoleType?: RoleType })?.assignedRoleType
+      const role = this.findAvailableRole(roleType)
+
+      if (!role) {
+        // No available role, wait
+        break
+      }
+
+      // Start task
+      if (this.taskQueue.startTask(queued.id)) {
+        task.status = 'running'
+        task.startedAt = Date.now()
+        task.assignedRoleId = role.id
+        this.runningTasks.set(taskId, role.id)
+
+        // Assign to role
+        this.roleManager.assignTask(role.id)
+
+        // Execute task
+        this.executeTask(task, role).catch(error => {
+          console.error(`[MultiAgentEngine] Task ${taskId} failed:`, error)
         })
-
-        orchestratorPlan.push(`[${role}] ${group}: ${calls.length} operation(s)`)
-        depId = taskId
       }
     }
-
-    return { tasks, orchestratorPlan: orchestratorPlan.join('\n') }
   }
 
   /**
-   * Group tool calls by complexity/type
+   * Check if task dependencies are met
    */
-  private groupToolCallsByComplexity(toolCalls: ToolCall[]): Record<string, ToolCall[]> {
-    const groups: Record<string, ToolCall[]> = {
-      'file_operations': [],
-      'bash_commands': [],
-      'search_operations': [],
-      'other': []
+  private checkDependencies(task: UnattendedTask): boolean {
+    if (task.dependencies.length === 0) return true
+
+    for (const depId of task.dependencies) {
+      const depTask = this.unattendedTasks.get(depId)
+      if (!depTask) continue
+      if (depTask.status !== 'completed' && depTask.status !== 'failed') {
+        return false
+      }
+    }
+    return true
+  }
+
+  /**
+   * Find an available role
+   */
+  private findAvailableRole(preferredType?: RoleType): Role | undefined {
+    const available = this.roleManager.getAvailableRoles()
+    
+    if (preferredType) {
+      const preferred = available.find(r => r.type === preferredType)
+      if (preferred) return preferred
     }
 
-    for (const tc of toolCalls) {
-      if (tc.name.startsWith('file_')) {
-        groups['file_operations'].push(tc)
-      } else if (tc.name.startsWith('bash_') || tc.name === 'bash') {
-        groups['bash_commands'].push(tc)
-      } else if (tc.name.includes('search') || tc.name.includes('grep') || tc.name.includes('glob')) {
-        groups['search_operations'].push(tc)
+    // Round-robin among available roles
+    return available[0]
+  }
+
+  /**
+   * Execute a task using assigned role
+   */
+  private async executeTask(task: UnattendedTask, role: Role): Promise<void> {
+    const startTime = Date.now()
+    const roleId = role.id
+
+    // Create sub-agent for this task
+    const agent = this.subAgentManager.createAgent(`task-${task.id}`, roleId)
+
+    // Share KV cache from parent if available
+    const parentAgent = this.subAgentManager.getAgent(roleId)
+    if (parentAgent) {
+      this.subAgentManager.shareKVCacheFromParent(agent.id, roleId)
+    }
+
+    // Add tasks to agent
+    this.subAgentManager.addTask(agent.id, task.description, task.toolCalls, task.dependencies)
+
+    // Run agent
+    let result: SubAgentResult
+    try {
+      result = await this.subAgentManager.runAgent(agent.id)
+    } catch (error) {
+      result = {
+        agentId: agent.id,
+        success: false,
+        tasks: [],
+        aggregatedOutput: '',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+
+    const executionTime = Date.now() - startTime
+
+    // Update task status
+    if (result.success) {
+      task.status = 'completed'
+      task.result = result
+      this.taskQueue.completeTask(task.id, result)
+    } else {
+      // Check retry
+      const { retried } = this.taskQueue.failTask(task.id, result.error || 'Task failed')
+      
+      if (retried) {
+        task.retryCount++
+        task.status = 'pending'
       } else {
-        groups['other'].push(tc)
+        task.status = 'failed'
+        task.error = result.error
       }
     }
 
-    // Remove empty groups
-    return Object.fromEntries(
-      Object.entries(groups).filter(([_, calls]) => calls.length > 0)
-    )
-  }
+    task.completedAt = Date.now()
 
-  /**
-   * Infer agent role from tool call group
-   */
-  private inferRoleFromGroup(group: string): AgentRole {
-    switch (group) {
-      case 'file_operations':
-        return 'refactorer'
-      case 'bash_commands':
-        return 'test_generator'
-      case 'search_operations':
-        return 'code_reviewer'
-      default:
-        return 'orchestrator'
+    // Release role
+    this.roleManager.completeTask(roleId, result.success, executionTime)
+
+    // Clean up
+    this.runningTasks.delete(task.id)
+
+    // Notify via message bus
+    if (this.config.enableMessageBus) {
+      this.messageBus.publish(role.type, MESSAGE_TYPES.TASK_COMPLETED, {
+        taskId: task.id,
+        success: result.success,
+        roleId
+      })
+    }
+
+    this.emit('task:completed', { taskId: task.id, success: result.success, executionTime })
+
+    // Check if task should be removed from active map
+    if (task.status === 'completed' || task.status === 'failed') {
+      this.completedTasks.set(task.id, task)
+      this.unattendedTasks.delete(task.id)
     }
   }
 
   /**
-   * Add tasks to an agent
+   * Cancel a task
    */
-  addTasks(agentId: string, tasks: Array<{ description: string; toolCalls: ToolCall[]; dependencies?: string[] }>): SubTask[] {
-    return this.manager.addTasks(agentId, tasks)
+  cancelTask(taskId: string): boolean {
+    const task = this.unattendedTasks.get(taskId)
+    if (!task) return false
+
+    // If running, cancel the role's assignment
+    if (task.status === 'running' && task.assignedRoleId) {
+      this.roleManager.completeTask(task.assignedRoleId, false)
+      this.runningTasks.delete(taskId)
+    }
+
+    task.status = 'cancelled'
+    this.taskQueue.cancel(taskId)
+    this.unattendedTasks.delete(taskId)
+    this.completedTasks.set(taskId, task)
+
+    this.emit('task:cancelled', { taskId })
+    return true
   }
 
   /**
-   * Set tool executor for the manager
+   * Get task status
    */
-  setToolExecutor(executor: (toolName: string, args: Record<string, unknown>) => Promise<any>): void {
-    this.manager.setToolExecutor(executor)
+  getTaskStatus(taskId: string): UnattendedTaskStatus | undefined {
+    return this.unattendedTasks.get(taskId)?.status || this.completedTasks.get(taskId)?.status
   }
 
   /**
-   * Execute a single agent
+   * Get task result
    */
-  async runAgent(agentId: string): Promise<SubAgentResult> {
-    return this.manager.runAgent(agentId)
+  getTaskResult(taskId: string): SubAgentResult | undefined {
+    return this.unattendedTasks.get(taskId)?.result || this.completedTasks.get(taskId)?.result
   }
 
   /**
-   * Run all agents in collaboration
+   * Get all active tasks
    */
-  async runCollaboration(agentIds: string[]): Promise<AggregatedCollaborationResult> {
-    const results: SubAgentResult[] = []
-    let successfulAgents = 0
-    let failedAgents = 0
+  getActiveTasks(): UnattendedTask[] {
+    return Array.from(this.unattendedTasks.values())
+  }
 
-    for (const agentId of agentIds) {
-      try {
-        const result = await this.manager.runAgent(agentId)
-        results.push(result)
-        if (result.success) {
-          successfulAgents++
-        } else {
-          failedAgents++
-        }
-      } catch (error) {
-        failedAgents++
-      }
-    }
+  /**
+   * Get completed tasks
+   */
+  getCompletedTasks(): UnattendedTask[] {
+    return Array.from(this.completedTasks.values())
+  }
 
-    // Aggregate outputs
-    const aggregatedOutput = results
-      .filter(r => r.aggregatedOutput)
-      .map(r => `[${r.agentId}]: ${r.aggregatedOutput}`)
-      .join('\n\n')
-
-    // Collect KV cache snapshots
-    const kvCacheSnapshots = new Map<string, { pointers: MemoryPointer[]; tokenCount: number; maxTokens: number }>()
-    for (const result of results) {
-      if (result.kvCacheSnapshot) {
-        kvCacheSnapshots.set(result.agentId, result.kvCacheSnapshot)
-      }
-    }
-
-    // Calculate task summary
-    let totalTasks = 0
-    let completedTasks = 0
-    let failedTasks = 0
-
-    for (const result of results) {
-      for (const task of result.tasks) {
-        totalTasks++
-        if (task.success) {
-          completedTasks++
-        } else {
-          failedTasks++
-        }
-      }
-    }
-
+  /**
+   * Get statistics
+   */
+  getStats(): {
+    activeTasks: number
+    completedTasks: number
+    runningTasks: number
+    roleStats: ReturnType<RoleManager['getStats']>
+    queueStats: ReturnType<TaskQueue['getStats']>
+  } {
     return {
-      success: failedAgents === 0,
-      totalAgents: agentIds.length,
-      successfulAgents,
-      failedAgents,
-      aggregatedOutput,
-      kvCacheSnapshots,
-      taskSummary: {
-        total: totalTasks,
-        completed: completedTasks,
-        failed: failedTasks,
-        successRate: totalTasks > 0 ? completedTasks / totalTasks : 0
+      activeTasks: this.unattendedTasks.size,
+      completedTasks: this.completedTasks.size,
+      runningTasks: this.runningTasks.size,
+      roleStats: this.roleManager.getStats(),
+      queueStats: this.taskQueue.getStats()
+    }
+  }
+
+  /**
+   * Register event listener
+   */
+  on(event: string, callback: (data: unknown) => void): () => void {
+    const listeners = this.listeners.get(event) || []
+    listeners.push(callback)
+    this.listeners.set(event, listeners)
+
+    return () => {
+      const current = this.listeners.get(event) || []
+      this.listeners.set(event, current.filter(cb => cb !== callback))
+    }
+  }
+
+  /**
+   * Emit event
+   */
+  private emit(event: string, data: unknown): void {
+    const listeners = this.listeners.get(event) || []
+    for (const callback of listeners) {
+      try {
+        callback(data)
+      } catch (error) {
+        console.error(`[MultiAgentEngine] Event listener error (${event}):`, error)
       }
     }
   }
 
   /**
-   * Get all agents
+   * Get all registered roles
    */
-  getAllAgents(): SubAgent[] {
-    return this.manager.getAllAgents()
+  getRoles(): Role[] {
+    return this.roleManager.getAllRoles()
   }
 
   /**
-   * Get agent by ID
+   * Get role by ID
    */
-  getAgent(agentId: string): SubAgent | undefined {
-    return this.manager.getAgent(agentId)
+  getRole(roleId: string): Role | undefined {
+    return this.roleManager.getRole(roleId)
   }
 
   /**
-   * Get manager statistics
+   * Update role configuration
    */
-  getStats() {
-    return this.manager.getStats()
+  async updateRoleConfig(roleId: string, config: Partial<RoleConfig>): Promise<boolean> {
+    const role = this.roleManager.getRole(roleId)
+    if (!role) return false
+
+    // Update in store
+    try {
+      const roleStore = getRoleStore()
+      await roleStore.updateRoleConfig(roleId, config)
+    } catch (error) {
+      console.warn('[MultiAgentEngine] Failed to update role in store:', error)
+    }
+
+    return true
   }
 
   /**
-   * Cancel an agent
+   * Clear completed tasks
    */
-  cancelAgent(agentId: string): boolean {
-    return this.manager.cancelAgent(agentId)
-  }
-
-  /**
-   * Get KV cache snapshot
-   */
-  getKVCacheSnapshot(agentId: string) {
-    return this.manager.getKVCacheSnapshot(agentId)
-  }
-
-  /**
-   * Clear completed agents
-   */
-  clearCompletedAgents(): number {
-    return this.manager.clearCompletedAgents()
+  clearCompletedTasks(): void {
+    this.completedTasks.clear()
+    this.taskQueue.clearHistory()
   }
 }
 
 // Singleton instance
-let multiAgentEngineInstance: MultiAgentEngine | null = null
+let engineInstance: MultiAgentEngine | null = null
 
 export function getMultiAgentEngine(): MultiAgentEngine | null {
-  return multiAgentEngineInstance
+  return engineInstance
 }
 
-export function initMultiAgentEngine(options?: { maxConcurrentAgents?: number; maxKVCacheSize?: number }): MultiAgentEngine {
-  multiAgentEngineInstance = new MultiAgentEngine(options)
-  return multiAgentEngineInstance
+export function initMultiAgentEngine(options?: Partial<EngineConfig>): MultiAgentEngine {
+  engineInstance = new MultiAgentEngine(options)
+  return engineInstance
 }

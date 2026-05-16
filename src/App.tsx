@@ -117,8 +117,7 @@ function App() {
 
       // v2: Initialize multi-agent engine for collaboration
       initMultiAgentEngine({
-        maxConcurrentAgents: config.subAgent?.maxConcurrentAgents || 4,
-        maxKVCacheSize: config.subAgent?.maxKVCacheSize || 128000
+        maxConcurrentTasks: config.subAgent?.maxConcurrentAgents || 4
       })
 
       // Set tool executor callback

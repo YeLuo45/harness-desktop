@@ -350,3 +350,98 @@ export interface StorageStats {
   keyCount: number
   totalSizeBytes: number
 }
+
+// ==========================================
+// v4: Role-Based Multi-Agent Unattended System Types
+// ==========================================
+
+export type RoleType = 'planner' | 'coder' | 'reviewer' | 'executor'
+export type RoleStatus = 'idle' | 'initializing' | 'ready' | 'busy' | 'error' | 'stopped'
+
+/**
+ * Agent message for inter-role communication
+ */
+export interface AgentMessage {
+  id: string
+  type: string
+  fromRole: RoleType | string
+  fromAgentId?: string
+  toRole: RoleType | string
+  toAgentId?: string
+  payload: unknown
+  priority: 'high' | 'normal' | 'low'
+  deliveryMode: 'reliable' | 'express' | 'batch'
+  timestamp: number
+  expiresAt?: number
+  correlationId?: string
+  replyTo?: string
+  headers?: Record<string, string>
+  retryCount: number
+  maxRetries: number
+  status: 'pending' | 'delivered' | 'failed' | 'expired'
+}
+
+/**
+ * Role configuration for multi-agent system
+ */
+export interface RoleConfig {
+  id?: string
+  name: string
+  type: RoleType
+  description?: string
+  maxConcurrentTasks: number
+  timeout: number
+  retryOnFailure: boolean
+  maxRetries: number
+  capabilities: string[]
+  metadata?: Record<string, unknown>
+}
+
+/**
+ * Task status for unattended processing
+ */
+export type UnattendedTaskStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+/**
+ * An unattended task submitted to the multi-agent engine
+ */
+export interface UnattendedTask {
+  id: string
+  description: string
+  toolCalls: ToolCall[]
+  priority: 'critical' | 'high' | 'normal' | 'low'
+  status: UnattendedTaskStatus
+  createdAt: number
+  startedAt?: number
+  completedAt?: number
+  retryCount: number
+  maxRetries: number
+  assignedRoleId?: string
+  result?: SubAgentResult
+  error?: string
+  dependencies: string[]
+}
+
+/**
+ * Role in the multi-agent system
+ */
+export interface Role {
+  id: string
+  name: string
+  type: RoleType
+  status: RoleStatus
+  config: RoleConfig
+  currentTasks: number
+  completedTasks: number
+  failedTasks: number
+  totalExecutionTime: number
+  lastActiveAt?: number
+  createdAt: number
+  error?: string
+  health: {
+    checkCount: number
+    lastCheckAt?: number
+    isHealthy: boolean
+    consecutiveFailures: number
+  }
+}
