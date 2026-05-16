@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react'
 
 interface HeaderProps {
   onSettingsClick: () => void
+  onDesignerClick?: () => void
 }
 
-function Header({ onSettingsClick }: HeaderProps) {
+function Header({ onSettingsClick, onDesignerClick }: HeaderProps) {
   const [isMaximized, setIsMaximized] = useState(false)
 
   useEffect(() => {
@@ -46,6 +47,14 @@ function Header({ onSettingsClick }: HeaderProps) {
       <div className="header-title">⚡ Harness Desktop</div>
 
       <div className="header-controls">
+        <button
+          className="header-btn"
+          onClick={onDesignerClick}
+          title="Workflow Designer"
+          style={{ color: '#4A90D9' }}
+        >
+          🔧
+        </button>
         <button
           className="header-btn"
           onClick={onSettingsClick}

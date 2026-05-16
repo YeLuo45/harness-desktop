@@ -15,6 +15,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@xyflow/react": "^12.10.2",
     "electron-log": "^5.4.3",
     "electron-store": "^8.2.0",
     "eventsource": "^2.0.2",
@@ -28,7 +29,6 @@
   },
   "devDependencies": {
     "@types/eventsource": "^1.1.15",
-    "@types/node": "^20.12.7",
     "@types/react": "^18.2.79",
     "@types/react-dom": "^18.2.25",
     "@types/uuid": "^9.0.8",
@@ -38,7 +38,7 @@
     "electron-builder": "^24.13.3",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
-    "typescript": "^5.4.5",
+    "typescript": "^5.9.3",
     "vite": "^5.2.10",
     "vite-plugin-electron": "^0.28.6",
     "vite-plugin-electron-renderer": "^0.14.5",

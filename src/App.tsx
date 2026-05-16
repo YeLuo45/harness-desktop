@@ -21,8 +21,9 @@ import CollaborationView, { agentsToCollaborationView, getActiveTasks } from './
 import SettingsPanel from './components/SettingsPanel'
 import WelcomeScreen from './components/WelcomeScreen'
 import { LogViewer } from './components/LogViewer'
+import WorkflowDesigner from './components/designer/WorkflowDesigner'
 
-type View = 'chat' | 'settings'
+type View = 'chat' | 'settings' | 'designer'
 
 function App() {
   const [view, setView] = useState<View>('chat')
@@ -33,6 +34,25 @@ function App() {
   const [showLogViewer, setShowLogViewer] = useState(false)
   // v2: Collaboration mode
   const [showCollaboration, setShowCollaboration] = useState(false)
+
+  // Handle URL hash for navigation
+  useEffect(() => {
+    const handleHashChange = () => {
+      if (window.location.hash === '#designer') {
+        setView('designer')
+      } else if (view === 'designer') {
+        setView('chat')
+      }
+    }
+    handleHashChange() // Check on mount
+    window.addEventListener('hashchange', handleHashChange)
+    return () => window.removeEventListener('hashchange', handleHashChange)
+  }, [view])
+
+  // Navigate to designer
+  const handleDesignerClick = useCallback(() => {
+    setView('designer')
+  }, [])
 
   const {
     messages,
@@ -755,7 +775,7 @@ function App() {
 
   return (
     <div className="app-container">
-      <Header onSettingsClick={() => setView(view === 'settings' ? 'chat' : 'settings')} />
+      <Header onSettingsClick={() => setView(view === 'settings' ? 'chat' : 'settings')} onDesignerClick={handleDesignerClick} />
 
       <div className="main-content">
         {view === 'chat' && (
@@ -803,6 +823,10 @@ function App() {
 
         {view === 'settings' && (
           <SettingsPanel />
+        )}
+
+        {view === 'designer' && (
+          <WorkflowDesigner onBack={() => setView('chat')} />
         )}
       </div>
 

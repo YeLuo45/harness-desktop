@@ -117,6 +117,16 @@ function Sidebar() {
         >
           Clear Conversation
         </button>
+        <button
+          className="btn-secondary"
+          style={{ width: '100%', fontSize: '12px', padding: '6px 10px', marginTop: '8px', background: '#2A3A5C' }}
+          onClick={() => {
+            // Navigate to designer via URL hash
+            window.location.hash = 'designer'
+          }}
+        >
+          🔧 Workflow Designer
+        </button>
       </div>
     </aside>
   )
