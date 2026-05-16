@@ -21,6 +21,20 @@ export interface TelegramConfig extends ChannelConfig {
   allowedChatIds: string[]
 }
 
+export interface DiscordConfig extends ChannelConfig {
+  type: 'discord'
+  botToken: string
+  guildId: string
+  allowedChannelIds: string[]
+}
+
+export interface FeishuConfig extends ChannelConfig {
+  type: 'feishu'
+  appId: string
+  appSecret: string
+  botName?: string
+}
+
 export interface AdapterStats {
   messagesReceived: number
   messagesSent: number

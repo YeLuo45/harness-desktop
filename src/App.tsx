@@ -9,7 +9,7 @@ import { initSubAgentManager, getSubAgentManager } from './services/subAgentMana
 import { initMultiAgentEngine, getMultiAgentEngine } from './services/multiAgentEngine'
 import { useCollaborationEvents } from './services/multiAgent'
 import { V2_TOOLS } from './services/modelAdapters'
-import { TelegramAdapter } from './channels'
+import { TelegramAdapter, DiscordAdapter, FeishuAdapter } from './channels'
 import { getMessageBus } from './services/messageBus'
 import type { Message, ToolResult, ExecutionPlan, PlanStep, ChatMessage, VerificationConfig, SubAgentResult } from './types'
 import Header from './components/Header'
@@ -94,6 +94,68 @@ function App() {
       }
     }
     initTelegram()
+
+    // v2: Initialize Discord channel adapter if configured
+    const initDiscord = async () => {
+      const { discord, loadDiscordConfig } = useChannelStore.getState()
+      await loadDiscordConfig()
+
+      const currentDiscord = useChannelStore.getState().discord
+      if (currentDiscord?.enabled && currentDiscord.botToken) {
+        const messageBus = getMessageBus()
+        const discordAdapter = new DiscordAdapter()
+
+        discordAdapter.initialize(currentDiscord, (message) => {
+          const payload = message.payload as Record<string, unknown>
+          messageBus.publish(message.toRole, message.type, {
+            ...payload,
+            _channel: 'discord'
+          })
+        })
+
+        await discordAdapter.connect()
+
+        messageBus.subscribe((message) => {
+          if (message.toRole === 'discord' || message.toRole === '*') {
+            discordAdapter.send(message).catch(console.error)
+          }
+        }, { role: 'discord' })
+
+        console.log('[DiscordAdapter] Initialized and connected')
+      }
+    }
+    initDiscord()
+
+    // v2: Initialize Feishu channel adapter if configured
+    const initFeishu = async () => {
+      const { feishu, loadFeishuConfig } = useChannelStore.getState()
+      await loadFeishuConfig()
+
+      const currentFeishu = useChannelStore.getState().feishu
+      if (currentFeishu?.enabled && currentFeishu.appId && currentFeishu.appSecret) {
+        const messageBus = getMessageBus()
+        const feishuAdapter = new FeishuAdapter()
+
+        feishuAdapter.initialize(currentFeishu, (message) => {
+          const payload = message.payload as Record<string, unknown>
+          messageBus.publish(message.toRole, message.type, {
+            ...payload,
+            _channel: 'feishu'
+          })
+        })
+
+        await feishuAdapter.connect()
+
+        messageBus.subscribe((message) => {
+          if (message.toRole === 'feishu' || message.toRole === '*') {
+            feishuAdapter.send(message).catch(console.error)
+          }
+        }, { role: 'feishu' })
+
+        console.log('[FeishuAdapter] Initialized and connected')
+      }
+    }
+    initFeishu()
 
     // v2: Restore memory from long-term storage
     const restoreMemory = async () => {
