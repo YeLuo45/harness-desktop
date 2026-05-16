@@ -14,6 +14,7 @@ import { RoleManager, getRoleManager, type Role, type RoleType, type RoleConfig 
 import { getRoleStore, type StoredRoleConfig } from '../store/roleStore'
 import { setToolSandbox, getToolSandbox } from './tools'
 import { ToolSandbox } from './tools/toolSandbox'
+import { DreamMemoryService, type Session } from './memory'
 
 export type UnattendedTaskStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 
@@ -73,6 +74,7 @@ export class MultiAgentEngine {
   private isRunning = false
   private processInterval?: ReturnType<typeof setInterval>
   private listeners: Map<string, Array<(data: unknown) => void>> = new Map()
+  private dreamMemory: DreamMemoryService | null = null
 
   constructor(options?: Partial<EngineConfig> & { taskQueue?: TaskQueue; messageBus?: MessageBus; roleManager?: RoleManager; subAgentManager?: SubAgentManager }) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...options }
@@ -114,6 +116,48 @@ export class MultiAgentEngine {
 
     // Initialize tool sandbox
     this.initializeSandbox()
+
+    // Initialize Dream Memory Service
+    this.initializeDreamMemory()
+  }
+
+  /**
+   * Initialize Dream Memory Service with LLM summarization
+   */
+  private initializeDreamMemory(): void {
+    try {
+      const { providerManager } = require('./providers')
+      const { getLLMBridge } = require('./llmBridge')
+      const bridge = getLLMBridge()
+
+      if (!bridge) {
+        console.warn('[MultiAgentEngine] DreamMemory: LLMBridge not initialized yet')
+        return
+      }
+
+      this.dreamMemory = new DreamMemoryService({
+        dreamWindow: 50,
+        maxTokens: 128000,
+        compactThreshold: 0.8,
+        llmSummarize: async (text: string) => {
+          // Use the LLM bridge to summarise text
+          const provider = providerManager.getCurrentProvider()
+          if (!provider) return `[Summary unavailable - no provider]`
+
+          const response = await provider.chat([
+            {
+              role: 'user' as const,
+              content: `Summarise the following conversation concisely in 2-3 sentences:\n\n${text}`
+            }
+          ])
+          return response.content
+        }
+      })
+
+      console.log('[MultiAgentEngine] DreamMemory service initialised')
+    } catch (error) {
+      console.warn('[MultiAgentEngine] DreamMemory initialisation skipped:', error)
+    }
   }
 
   /**

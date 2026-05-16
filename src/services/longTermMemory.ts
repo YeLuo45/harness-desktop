@@ -55,6 +55,17 @@ export class LongTermMemoryService {
     this.cold = createElectronStoreBackend()
   }
 
+  // Export these for use by SessionManager
+  static saveSessionAtomic = async (path: string, data: unknown) => {
+    const { saveSessionAtomic: fn } = await import('./memory/atomicSession')
+    return fn(path, data)
+  }
+
+  static loadSession = async (path: string) => {
+    const { loadSession: fn } = await import('./memory/atomicSession')
+    return fn(path)
+  }
+
   // ============================================
   // Memory Pointer Operations
   // ============================================
