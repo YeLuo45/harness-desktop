@@ -204,6 +204,23 @@ export class FeishuAdapter extends ChannelAdapter {
 
     this.recordReceived()
 
+    // Check if message starts with command prefix
+    const commandPrefix = '/'
+    if (text.startsWith(commandPrefix)) {
+      // Parse command
+      const parts = text.slice(1).split(' ')
+      const command = parts[0].toLowerCase()
+      const args = parts.slice(1).join(' ')
+
+      // Handle provider command
+      if (command === 'provider') {
+        this.handleProvider(feishuMsg.chat_id, args)
+        return
+      }
+
+      // For other commands, continue with normal message handling
+    }
+
     const agentMessage: AgentMessage = {
       id: uuidv4(),
       type: 'feishu_message',
@@ -292,6 +309,28 @@ export class FeishuAdapter extends ChannelAdapter {
     this.tenantAccessToken = data.tenant_access_token
     // Refresh 5 minutes before expiry
     this.tokenExpiry = Date.now() + ((data.expire || 7200) - 300) * 1000
+  }
+
+  /**
+   * Handle provider command
+   */
+  private async handleProvider(chatId: string, args: string): Promise<void> {
+    const name = args.trim().toLowerCase()
+    const validProviders = ['openai', 'anthropic', 'azure', 'google', 'custom']
+
+    if (!name) {
+      await this.sendMessage(chatId, `⚠️ Usage: /provider <name>\nValid providers: ${validProviders.join(', ')}`)
+      return
+    }
+
+    if (validProviders.includes(name as any)) {
+      import('../store/providerStore').then(({ useProviderStore }) => {
+        useProviderStore.getState().setCurrentProvider(name as any)
+      }).catch(console.error)
+      await this.sendMessage(chatId, `✅ Provider switched to ${name}`)
+    } else {
+      await this.sendMessage(chatId, `❌ Unknown provider: ${name}\nValid providers: ${validProviders.join(', ')}`)
+    }
   }
 
   /**

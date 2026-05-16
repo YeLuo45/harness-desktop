@@ -169,6 +169,9 @@ export class TelegramAdapter extends ChannelAdapter {
       case '/task':
         this.handleTask(command)
         break
+      case '/provider':
+        this.handleProvider(command)
+        break
       default:
         this.handleUnknown(command)
     }
@@ -238,12 +241,12 @@ Channels: Connected`
     await this.sendMessage(command.chatId, statusMessage)
   }
 
-  /**
+/**
    * Handle /task command
    */
   private async handleTask(command: TelegramCommand): Promise<void> {
     if (!command.args.trim()) {
-      await this.sendMessage(command.chatId, '⚠️ Usage: /task \<task description\>')
+      await this.sendMessage(command.chatId, '⚠️ Usage: /task \\<task description\\>')
       return
     }
 
@@ -273,6 +276,29 @@ Channels: Connected`
     if (this.messageCallback) {
       this.messageCallback(agentMessage)
       await this.sendMessage(command.chatId, '✅ Task submitted to agent queue')
+    }
+  }
+
+  /**
+   * Handle /provider command
+   */
+  private async handleProvider(command: TelegramCommand): Promise<void> {
+    const name = command.args.trim().toLowerCase()
+    const validProviders = ['openai', 'anthropic', 'azure', 'google', 'custom']
+
+    if (!name) {
+      await this.sendMessage(command.chatId, `⚠️ Usage: /provider \\<name\\>\nValid providers: ${validProviders.join(', ')}`)
+      return
+    }
+
+    if (validProviders.includes(name as any)) {
+      // Dynamically import to avoid circular dependency
+      import('../store/providerStore').then(({ useProviderStore }) => {
+        useProviderStore.getState().setCurrentProvider(name as any)
+      }).catch(console.error)
+      await this.sendMessage(command.chatId, `✅ Provider switched to ${name}`)
+    } else {
+      await this.sendMessage(command.chatId, `❌ Unknown provider: ${name}\nValid providers: ${validProviders.join(', ')}`)
     }
   }
 

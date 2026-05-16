@@ -36,6 +36,17 @@ export class ProviderManager {
     return false;
   }
 
+  updateProviderConfig(name: string, apiKey: string, endpoint?: string, model?: string): boolean {
+    const provider = this.providers.get(name);
+    if (provider) {
+      provider.config.apiKey = apiKey;
+      if (endpoint) provider.config.baseUrl = endpoint;
+      if (model) provider.config.model = model;
+      return true;
+    }
+    return false;
+  }
+
   getCurrentProvider(): BaseProvider | null {
     return this.currentProvider;
   }

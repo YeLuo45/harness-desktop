@@ -228,6 +228,9 @@ export class DiscordAdapter extends ChannelAdapter {
       case 'task':
         this.handleTask(discordMsg, args)
         break
+      case 'provider':
+        this.handleProvider(discordMsg, args)
+        break
       default:
         this.handleUnknown(discordMsg.channel_id, command)
     }
@@ -302,6 +305,31 @@ Channels: Connected`
     if (this.messageCallback) {
       this.messageCallback(agentMessage)
       await this.sendMessage(discordMsg.channel_id, '✅ Task submitted to agent queue')
+    }
+  }
+
+  /**
+   * Handle provider command
+   */
+  private async handleProvider(
+    discordMsg: { id: string; author: { id: string; username: string }; channel_id: string },
+    args: string
+  ): Promise<void> {
+    const name = args.trim().toLowerCase()
+    const validProviders = ['openai', 'anthropic', 'azure', 'google', 'custom']
+
+    if (!name) {
+      await this.sendMessage(discordMsg.channel_id, `⚠️ Usage: !provider <name>\nValid providers: ${validProviders.join(', ')}`)
+      return
+    }
+
+    if (validProviders.includes(name as any)) {
+      import('../store/providerStore').then(({ useProviderStore }) => {
+        useProviderStore.getState().setCurrentProvider(name as any)
+      }).catch(console.error)
+      await this.sendMessage(discordMsg.channel_id, `✅ Provider switched to ${name}`)
+    } else {
+      await this.sendMessage(discordMsg.channel_id, `❌ Unknown provider: ${name}\nValid providers: ${validProviders.join(', ')}`)
     }
   }
 
