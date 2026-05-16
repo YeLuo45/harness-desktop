@@ -348,3 +348,21 @@ export function initToolRegistry(): ToolRegistry {
   console.log(`[ToolRegistry] Initialized with ${BUILT_IN_TOOLS.length} built-in tools`)
   return registry
 }
+
+// Tool sandbox instance for tool execution pipeline integration
+let toolSandboxInstance: import('./toolSandbox').ToolSandbox | null = null
+
+/**
+ * Set the tool sandbox instance
+ */
+export function setToolSandbox(sandbox: import('./toolSandbox').ToolSandbox): void {
+  toolSandboxInstance = sandbox
+  console.log('[ToolRegistry] Tool sandbox configured')
+}
+
+/**
+ * Get the tool sandbox instance
+ */
+export function getToolSandbox(): import('./toolSandbox').ToolSandbox | null {
+  return toolSandboxInstance
+}

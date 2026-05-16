@@ -9,3 +9,6 @@ export { registerTool, getToolMetadata, getAllToolMetadata, hasToolMetadata } fr
 
 // Re-export tool executor type for convenience
 export type { ToolExecutor } from './types'
+
+// Tool sandbox integration
+export { setToolSandbox, getToolSandbox } from './toolRegistry'

@@ -12,6 +12,8 @@ import { TaskQueue, getTaskQueue, type QueuedTask, type TaskPriority } from './t
 import { MessageBus, getMessageBus, type AgentMessage } from './messageBus'
 import { RoleManager, getRoleManager, type Role, type RoleType, type RoleConfig } from './roleManager'
 import { getRoleStore, type StoredRoleConfig } from '../store/roleStore'
+import { setToolSandbox, getToolSandbox } from './tools'
+import { ToolSandbox } from './tools/toolSandbox'
 
 export type UnattendedTaskStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 
@@ -109,6 +111,26 @@ export class MultiAgentEngine {
 
     // Set up message bus subscriptions for inter-role communication
     this.setupMessageBusSubscriptions()
+
+    // Initialize tool sandbox
+    this.initializeSandbox()
+  }
+
+  /**
+   * Initialize tool sandbox from store config
+   */
+  private initializeSandbox(): void {
+    try {
+      // Dynamic import to avoid circular deps
+      import('../store/sandboxStore').then(({ useSandboxStore }) => {
+        const { config } = useSandboxStore.getState()
+        const sandbox = new ToolSandbox(config)
+        setToolSandbox(sandbox)
+        console.log('[MultiAgentEngine] Tool sandbox initialized')
+      })
+    } catch (error) {
+      console.warn('[MultiAgentEngine] Failed to initialize sandbox:', error)
+    }
   }
 
   /**
