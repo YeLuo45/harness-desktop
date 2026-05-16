@@ -15,6 +15,7 @@ import { getRoleStore, type StoredRoleConfig } from '../store/roleStore'
 import { setToolSandbox, getToolSandbox } from './tools'
 import { ToolSandbox } from './tools/toolSandbox'
 import { DreamMemoryService, type Session } from './memory'
+import { PipelineOrchestrator } from './pipeline'
 
 export type UnattendedTaskStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 
@@ -75,6 +76,7 @@ export class MultiAgentEngine {
   private processInterval?: ReturnType<typeof setInterval>
   private listeners: Map<string, Array<(data: unknown) => void>> = new Map()
   private dreamMemory: DreamMemoryService | null = null
+  private pipelineOrchestrator = new PipelineOrchestrator({ unattended: true })
 
   constructor(options?: Partial<EngineConfig> & { taskQueue?: TaskQueue; messageBus?: MessageBus; roleManager?: RoleManager; subAgentManager?: SubAgentManager }) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...options }
@@ -227,6 +229,9 @@ export class MultiAgentEngine {
     }
 
     this.unattendedTasks.set(id, task)
+
+    // Start pipeline for this task
+    this.pipelineOrchestrator.startPipeline(id)
 
     // Add to queue
     this.taskQueue.enqueue('unattended', { taskId: id, toolCalls, description }, {
@@ -426,6 +431,11 @@ export class MultiAgentEngine {
     }
 
     this.emit('task:completed', { taskId: task.id, success: result.success, executionTime })
+
+    // Advance pipeline phase if possible
+    if (this.pipelineOrchestrator.canAdvance(task.id)) {
+      this.pipelineOrchestrator.advance(task.id)
+    }
 
     // Check if task should be removed from active map
     if (task.status === 'completed' || task.status === 'failed') {
