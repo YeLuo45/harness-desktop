@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAppStore } from './store/appStore'
 import { useConfigStore } from './store/configStore'
+import { useChannelStore } from './store/channelStore'
 import { initLLMBridge, getLLMBridge, LLMBridge } from './services/llmBridge'
 import { initContextManager, getContextManager } from './services/contextManager'
 import { getVerificationHooks, initVerificationHooks } from './services/verificationHooks'
@@ -8,6 +9,8 @@ import { initSubAgentManager, getSubAgentManager } from './services/subAgentMana
 import { initMultiAgentEngine, getMultiAgentEngine } from './services/multiAgentEngine'
 import { useCollaborationEvents } from './services/multiAgent'
 import { V2_TOOLS } from './services/modelAdapters'
+import { TelegramAdapter } from './channels'
+import { getMessageBus } from './services/messageBus'
 import type { Message, ToolResult, ExecutionPlan, PlanStep, ChatMessage, VerificationConfig, SubAgentResult } from './types'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
@@ -58,6 +61,39 @@ function App() {
   useEffect(() => {
     loadConfig()
     initContextManager()
+
+    // v2: Initialize Telegram channel adapter if configured
+    const initTelegram = async () => {
+      const { telegram, loadTelegramConfig } = useChannelStore.getState()
+      await loadTelegramConfig()
+      
+      const currentTelegram = useChannelStore.getState().telegram
+      if (currentTelegram?.enabled && currentTelegram.botToken) {
+        const messageBus = getMessageBus()
+        const telegramAdapter = new TelegramAdapter()
+        
+        // Set up message callback to publish to message bus
+        telegramAdapter.initialize(currentTelegram, (message) => {
+          const payload = message.payload as Record<string, unknown>
+          messageBus.publish(message.toRole, message.type, {
+            ...payload,
+            _channel: 'telegram'
+          })
+        })
+        
+        await telegramAdapter.connect()
+        
+        // Subscribe to messages for telegram role
+        messageBus.subscribe((message) => {
+          if (message.toRole === 'telegram' || message.toRole === '*') {
+            telegramAdapter.send(message).catch(console.error)
+          }
+        }, { role: 'telegram' })
+        
+        console.log('[TelegramAdapter] Initialized and connected')
+      }
+    }
+    initTelegram()
 
     // v2: Restore memory from long-term storage
     const restoreMemory = async () => {
